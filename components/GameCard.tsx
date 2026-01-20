@@ -1,5 +1,5 @@
 import React from 'react';
-import { Monitor, Smartphone, User, Calendar, Play } from 'lucide-react';
+import { Monitor, Smartphone, Play } from 'lucide-react';
 import { Game, Platform } from '../types';
 
 interface GameCardProps {
@@ -14,63 +14,48 @@ const GameCard: React.FC<GameCardProps> = ({ game, onClick }) => {
   return (
     <div 
       onClick={() => onClick(game)}
-      className="group bg-white rounded-xl border border-slate-100 overflow-hidden hover:shadow-lg hover:border-slate-200 transition-all duration-300 cursor-pointer relative"
+      className="group cursor-pointer flex flex-col gap-4"
     >
-      <div className="relative aspect-video overflow-hidden bg-slate-100">
+      <div className="relative aspect-[16/10] overflow-hidden rounded-2xl bg-slate-50">
         <img 
           src={game.thumbnailUrl} 
           alt={game.title}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 opacity-90 group-hover:opacity-100"
+          className="w-full h-full object-cover transition-all duration-700 group-hover:scale-105 group-hover:opacity-90 grayscale-[20%] group-hover:grayscale-0"
           loading="lazy"
         />
         
-        {/* Play Overlay */}
-        <div className="absolute inset-0 bg-black/10 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100 duration-300">
-          <div className="bg-white/90 backdrop-blur-sm p-4 rounded-full shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
-            <Play className="w-6 h-6 text-red-500 fill-current ml-1" />
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-white/10 backdrop-blur-[2px]">
+          <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-2xl transform scale-90 group-hover:scale-100 transition-transform duration-500">
+             <Play className="w-6 h-6 text-red-500 fill-current ml-1" />
           </div>
         </div>
 
-        <div className="absolute top-2 right-2 flex gap-1">
+        <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-500 translate-y-2 group-hover:translate-y-0">
           {hasPC && (
-            <div className="bg-white/90 backdrop-blur text-slate-700 p-1.5 rounded-md shadow-sm" title="Compatível com PC">
+            <div className="bg-white/90 backdrop-blur text-slate-900 p-2 rounded-lg shadow-sm">
               <Monitor size={14} />
             </div>
           )}
           {hasMobile && (
-            <div className="bg-white/90 backdrop-blur text-slate-700 p-1.5 rounded-md shadow-sm" title="Compatível com Celular">
+            <div className="bg-white/90 backdrop-blur text-slate-900 p-2 rounded-lg shadow-sm">
               <Smartphone size={14} />
             </div>
           )}
         </div>
       </div>
       
-      <div className="p-5">
-        <div className="flex justify-between items-start mb-2">
-          <div className="text-xs font-semibold text-red-500 tracking-wide uppercase">
-            {game.theme}
-          </div>
-          <div className="flex items-center text-xs text-slate-400 gap-1">
-            <Calendar size={12} />
-            <span>{game.year}</span>
-          </div>
+      <div>
+        <div className="flex justify-between items-baseline mb-1">
+          <h3 className="text-lg font-medium text-slate-900 group-hover:text-red-600 transition-colors duration-300">
+            {game.title}
+          </h3>
+          <span className="text-xs font-mono text-slate-300 group-hover:text-slate-500 transition-colors">{game.year}</span>
         </div>
         
-        <h3 className="text-lg font-medium text-slate-900 mb-2 group-hover:text-red-600 transition-colors">
-          {game.title}
-        </h3>
-        
-        <p className="text-sm text-slate-500 leading-relaxed mb-4 line-clamp-2">
-          {game.description}
-        </p>
-        
-        <div className="flex items-center pt-4 border-t border-slate-50">
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-            <div className="bg-slate-100 p-1 rounded-full">
-              <User size={12} />
-            </div>
-            <span>{game.creator}</span>
-          </div>
+        <div className="flex items-center gap-3 text-xs text-slate-400">
+           <span className="uppercase tracking-wider font-semibold text-slate-300 group-hover:text-red-400 transition-colors">{game.theme}</span>
+           <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
+           <span className="truncate">{game.creator}</span>
         </div>
       </div>
     </div>
