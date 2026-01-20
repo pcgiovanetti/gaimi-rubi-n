@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { X, User, Lock, Loader2, LogIn, Mail, Eye, EyeOff } from 'lucide-react';
+import { X, User, Lock, Loader2, LogIn, Mail, Eye, EyeOff, CheckCircle } from 'lucide-react';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -14,11 +14,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setSuccess(null);
 
     try {
       if (isLogin) {
@@ -49,11 +51,12 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
         if (data.user) {
             // Verifica se o login foi automático ou se requer confirmação
             if (data.session) {
-                alert('Conta criada e logada com sucesso!');
+                // Login automático (Email confirmation desligado no Supabase)
                 onClose();
             } else {
-                alert(`Conta criada! Um link de confirmação foi enviado para ${email}. Confirme para entrar.`);
-                setIsLogin(true);
+                // Requer confirmação
+                setSuccess(`Conta criada! Um link de confirmação foi enviado para ${email}.`);
+                setIsLogin(true); // Volta para tela de login para ele entrar após confirmar
             }
         }
       }
@@ -77,6 +80,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
         </div>
 
         <form onSubmit={handleAuth} className="p-6 space-y-4">
+          {success && (
+            <div className="p-3 bg-green-50 text-green-600 text-sm rounded-lg border border-green-100 leading-tight flex items-start gap-2">
+              <CheckCircle size={16} className="shrink-0 mt-0.5" />
+              <span>{success}</span>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 leading-tight">
               {error}
@@ -154,6 +164,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
               onClick={() => {
                   setIsLogin(!isLogin);
                   setError(null);
+                  setSuccess(null);
               }}
               className="text-sm text-slate-500 hover:text-red-500 font-medium"
             >

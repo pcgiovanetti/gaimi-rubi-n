@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Crosshair, Loader2, ShieldAlert } from 'lucide-react';
+import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Crosshair, Loader2, ShieldAlert, Trophy } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 // Admin Configuration
@@ -7,7 +7,7 @@ const ADMIN_EMAIL = "pcgiovanetti2011@gmail.com";
 
 interface Entity {
   id: string;
-  name: string; // Added Name
+  name: string; 
   x: number;
   y: number;
   vx: number;
@@ -15,7 +15,7 @@ interface Entity {
   radius: number;
   color: string;
   isPlayer: boolean;
-  isAdmin: boolean; // Added Admin Flag
+  isAdmin: boolean;
   isRemote?: boolean; 
   
   // Ability System
@@ -112,7 +112,7 @@ const PushBattles: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  const [gameState, setGameState] = useState<'LOBBY' | 'PLAYING' | 'GAMEOVER'>('LOBBY');
+  const [gameState, setGameState] = useState<'LOBBY' | 'PLAYING' | 'GAMEOVER' | 'VICTORY'>('LOBBY');
   const [gameMode, setGameMode] = useState<'BOTS' | 'ONLINE'>('BOTS');
   const [selectedAbility, setSelectedAbility] = useState<'IMPACT' | 'DASH' | 'QUAKE' | 'SNIPER' | 'VORTEX'>('IMPACT');
   const [highScore, setHighScore] = useState(0);
@@ -128,6 +128,9 @@ const PushBattles: React.FC = () => {
   const channelRef = useRef<any>(null);
   const myIdRef = useRef<string>(Math.random().toString(36).substr(2, 9));
   const myNameRef = useRef<string>("Player");
+  
+  // Track if we had opponents to determine victory
+  const hasOpponentsRef = useRef(false);
 
   // Load User & Profile
   useEffect(() => {
@@ -187,7 +190,6 @@ const PushBattles: React.FC = () => {
       });
   };
 
-  // ADMIN FUNCTION
   const handleAdminScoreChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!isAdmin || !user) return;
       const val = parseInt(e.target.value) || 0;
@@ -239,6 +241,7 @@ const PushBattles: React.FC = () => {
   const initGame = async () => {
     const ents: Entity[] = [];
     const abilityConfig = ABILITIES[selectedAbility];
+    hasOpponentsRef.current = false;
     
     // Add My Player
     ents.push({
@@ -297,9 +300,29 @@ const PushBattles: React.FC = () => {
         .on('broadcast', { event: 'player_attack' }, ({ payload }) => {
            handleRemoteAttack(payload);
         })
+        .on('broadcast', { event: 'player_hit' }, ({ payload }) => {
+           handleRemoteHit(payload);
+        })
         .on('presence', { event: 'sync' }, () => {
            const state = channel.presenceState();
-           setOnlineCount(Object.keys(state).length);
+           const presenceIds = Object.keys(state);
+           setOnlineCount(presenceIds.length);
+           
+           if (presenceIds.length > 1) {
+               hasOpponentsRef.current = true;
+           }
+
+           // CLEANUP: Remove players who left presence
+           gameRef.current.entities = gameRef.current.entities.filter(e => {
+               if (e.isPlayer) return true; // Keep self
+               if (!e.isRemote) return true; // Keep local bots (if any)
+               
+               const stillOnline = presenceIds.includes(e.id);
+               if (!stillOnline) {
+                   spawnParticles(e.x, e.y, e.color, 10); // Poof effect
+               }
+               return stillOnline;
+           });
         })
         .subscribe((status) => {
            if (status === 'SUBSCRIBED') {
@@ -320,6 +343,10 @@ const PushBattles: React.FC = () => {
           existing.y += (data.y - existing.y) * 0.3;
           existing.facing = data.facing;
           existing.ability = data.ability;
+          
+          if (data.dead && !existing.dead) {
+              spawnParticles(existing.x, existing.y, existing.color, 20); // Death explosion
+          }
           existing.dead = data.dead;
       } else if (!data.dead) {
           const config = ABILITIES[data.ability as keyof typeof ABILITIES] || ABILITIES.IMPACT;
@@ -332,7 +359,7 @@ const PushBattles: React.FC = () => {
               radius: PLAYER_RADIUS,
               color: config.color,
               isPlayer: false,
-              isAdmin: data.isAdmin, // Receive admin status
+              isAdmin: data.isAdmin,
               isRemote: true,
               ability: data.ability,
               moveSpeed: 0,
@@ -365,10 +392,19 @@ const PushBattles: React.FC = () => {
       }
   };
 
+  const handleRemoteHit = (payload: any) => {
+      const me = getPlayer();
+      if (me && me.id === payload.targetId && !me.dead) {
+          me.vx += Math.cos(payload.angle) * payload.force;
+          me.vy += Math.sin(payload.angle) * payload.force;
+          me.stunTimer = payload.stun;
+          spawnParticles(me.x, me.y, me.color, 10);
+      }
+  };
+
   const createBot = (index: number): Entity => {
      const angle = (Math.PI * 2 / 4) * index;
      const dist = 300;
-     const abilityKeys = Object.keys(ABILITIES) as Array<keyof typeof ABILITIES>;
      const simpleAbilities = ['IMPACT', 'DASH', 'QUAKE'];
      const randomAbility = simpleAbilities[Math.floor(Math.random() * simpleAbilities.length)] as keyof typeof ABILITIES;
      const config = ABILITIES[randomAbility];
@@ -507,6 +543,110 @@ const PushBattles: React.FC = () => {
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
 
+    // --- GAME LOGIC FUNCTIONS ---
+    
+    const applyAreaEffect = (source: Entity, range: number, force: number, stun: number, directional: boolean = false) => {
+        gameRef.current.entities.forEach(target => {
+            if (target.id === source.id || target.dead) return;
+            const dx = target.x - source.x;
+            const dy = target.y - source.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (dist < range + target.radius) {
+                const angle = Math.atan2(dy, dx);
+                
+                if (directional) {
+                    let angleDiff = angle - source.facing;
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    if (Math.abs(angleDiff) > Math.PI / 3) return; 
+                }
+
+                if (!target.isRemote) {
+                    target.vx += Math.cos(angle) * force;
+                    target.vy += Math.sin(angle) * force;
+                    target.stunTimer = stun;
+                } else if (gameMode === 'ONLINE' && channelRef.current) {
+                     channelRef.current.send({
+                         type: 'broadcast',
+                         event: 'player_hit',
+                         payload: {
+                             targetId: target.id,
+                             force: force,
+                             angle: angle,
+                             stun: stun
+                         }
+                     });
+                }
+                spawnParticles(target.x, target.y, target.color, 5);
+            }
+        });
+    };
+
+    const startBasicAttack = (ent: Entity) => {
+        ent.isAttacking = true;
+        ent.attackTimer = ATTACK_DURATION;
+        ent.hitList = [];
+        ent.attackCooldown = ent.maxAttackCooldown;
+    };
+
+    const useActiveSkill = (ent: Entity) => {
+        const config = ABILITIES[ent.ability];
+        ent.skillCooldown = ent.maxSkillCooldown;
+        ent.skillAnim = 15;
+
+        if (ent.ability === 'DASH') {
+            ent.vx += Math.cos(ent.facing) * config.force;
+            ent.vy += Math.sin(ent.facing) * config.force;
+            spawnParticles(ent.x, ent.y, config.color, 10);
+        } else if (ent.ability === 'QUAKE') {
+            spawnShockwave(ent.x, ent.y, config.range, config.color, 12);
+            applyAreaEffect(ent, config.range, config.force, config.stun, false);
+        } else if (ent.ability === 'IMPACT') {
+            spawnShockwave(ent.x, ent.y, config.range, config.color, 8);
+            applyAreaEffect(ent, config.range, config.force, config.stun, true);
+        } else if (ent.ability === 'VORTEX') {
+            spawnShockwave(ent.x, ent.y, config.range, config.color, 15);
+            applyAreaEffect(ent, config.range, config.force, config.stun, false);
+        } else if (ent.ability === 'SNIPER') {
+            const endX = ent.x + Math.cos(ent.facing) * config.range;
+            const endY = ent.y + Math.sin(ent.facing) * config.range;
+            
+            gameRef.current.entities.forEach(target => {
+                if (target.id === ent.id || target.dead) return;
+                const dx = target.x - ent.x;
+                const dy = target.y - ent.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < config.range && dist > 0) {
+                    const angleToTarget = Math.atan2(dy, dx);
+                    let angleDiff = angleToTarget - ent.facing;
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    
+                    if (Math.abs(angleDiff) < 0.2) { 
+                        if (!target.isRemote) {
+                            target.vx += Math.cos(ent.facing) * config.force;
+                            target.vy += Math.sin(ent.facing) * config.force;
+                            target.stunTimer = config.stun;
+                        } else if (gameMode === 'ONLINE' && channelRef.current) {
+                             channelRef.current.send({
+                                 type: 'broadcast',
+                                 event: 'player_hit',
+                                 payload: {
+                                     targetId: target.id,
+                                     force: config.force,
+                                     angle: ent.facing,
+                                     stun: config.stun
+                                 }
+                             });
+                        }
+                        spawnParticles(target.x, target.y, target.color, 8);
+                    }
+                }
+            });
+        }
+    };
+
     const loop = () => {
         if (gameState === 'PLAYING') {
             update();
@@ -521,6 +661,24 @@ const PushBattles: React.FC = () => {
         const ref = gameRef.current;
         const player = ref.entities.find(e => e.isPlayer);
         
+        // CHECK VICTORY (Online Only)
+        if (gameMode === 'ONLINE' && player && !player.dead) {
+            // Count alive enemies
+            const livingEnemies = ref.entities.filter(e => e.isRemote && !e.dead).length;
+            
+            if (hasOpponentsRef.current && livingEnemies === 0 && onlineCount > 1) {
+                if (onlineCount === 1) {
+                     // Everyone left?
+                } else {
+                    const allOthersDead = ref.entities.filter(e => e.isRemote).every(e => e.dead);
+                    if (allOthersDead && ref.entities.filter(e => e.isRemote).length > 0) {
+                         saveProgress(ref.currentScore + 5); // Bonus
+                         setGameState('VICTORY');
+                    }
+                }
+            }
+        }
+
         if (gameMode === 'ONLINE' && player && !player.dead && channelRef.current) {
             const now = Date.now();
             if (now - ref.lastBroadcast > 50) {
@@ -529,8 +687,8 @@ const PushBattles: React.FC = () => {
                     event: 'player_update',
                     payload: {
                         id: player.id,
-                        name: player.name, // Send name
-                        isAdmin: player.isAdmin, // Send admin status
+                        name: player.name, 
+                        isAdmin: player.isAdmin,
                         x: player.x,
                         y: player.y,
                         facing: player.facing,
@@ -563,11 +721,23 @@ const PushBattles: React.FC = () => {
                     if (dist < ATTACK_RADIUS + target.radius) {
                         e.hitList.push(target.id);
                         
+                        const angle = Math.atan2(dy, dx);
+                        
                         if (!target.isRemote) {
-                             const angle = Math.atan2(dy, dx);
                              target.vx += Math.cos(angle) * PUSH_FORCE;
                              target.vy += Math.sin(angle) * PUSH_FORCE;
                              target.stunTimer = 45;
+                        } else if (gameMode === 'ONLINE' && channelRef.current) {
+                             channelRef.current.send({
+                                 type: 'broadcast',
+                                 event: 'player_hit',
+                                 payload: {
+                                     targetId: target.id,
+                                     force: PUSH_FORCE,
+                                     angle: angle,
+                                     stun: 45
+                                 }
+                             });
                         }
                         
                         spawnParticles(target.x, target.y, target.color, 5);
@@ -718,72 +888,6 @@ const PushBattles: React.FC = () => {
             ref.camera.x += (player.x - ref.camera.x) * 0.1;
             ref.camera.y += (player.y - ref.camera.y) * 0.1;
         }
-    };
-
-    const startBasicAttack = (user: Entity) => {
-        user.isAttacking = true;
-        user.attackTimer = ATTACK_DURATION;
-        user.attackCooldown = user.maxAttackCooldown; 
-        user.hitList = []; 
-    };
-
-    const useActiveSkill = (user: Entity) => {
-        const config = ABILITIES[user.ability];
-        user.skillCooldown = user.maxSkillCooldown;
-        user.skillAnim = 15;
-
-        if (user.ability === 'DASH') {
-             user.vx += Math.cos(user.facing) * 45; 
-             user.vy += Math.sin(user.facing) * 45;
-             spawnParticles(user.x, user.y, config.color, 10);
-             applySkillEffect(user, config.range, config.force, config.stun);
-        } else {
-             if (user.ability === 'VORTEX') {
-                 for(let i=0; i<8; i++) {
-                     const angle = (Math.PI * 2 / 8) * i;
-                     const range = config.range;
-                     gameRef.current.particles.push({
-                         x: user.x + Math.cos(angle) * range,
-                         y: user.y + Math.sin(angle) * range,
-                         vx: Math.cos(angle + Math.PI) * 10,
-                         vy: Math.sin(angle + Math.PI) * 10,
-                         life: 0.5,
-                         color: config.color
-                     });
-                 }
-             } else {
-                 spawnShockwave(user.x, user.y, config.range, config.color, 20);
-             }
-             applySkillEffect(user, config.range, config.force, config.stun);
-        }
-    };
-
-    const applySkillEffect = (user: Entity, range: number, force: number, stunFrames: number) => {
-        const ref = gameRef.current;
-        ref.entities.forEach(target => {
-            if (target.id === user.id || target.dead) return;
-            if (gameMode === 'ONLINE' && target.isRemote) return;
-
-            const dx = target.x - user.x;
-            const dy = target.y - user.y;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-
-            if (dist < range + target.radius) {
-                const angle = Math.atan2(dy, dx);
-                target.vx += Math.cos(angle) * force;
-                target.vy += Math.sin(angle) * force;
-                target.stunTimer = stunFrames;
-                spawnParticles(target.x, target.y, target.color, 4);
-                
-                if (user.isPlayer) {
-                    ref.currentScore += 1;
-                    if (ref.currentScore > highScore) {
-                        setHighScore(ref.currentScore);
-                        localStorage.setItem('pushBattlesHigh', ref.currentScore.toString());
-                    }
-                }
-            }
-        });
     };
 
     const draw = (ctx: CanvasRenderingContext2D) => {
@@ -1112,6 +1216,23 @@ const PushBattles: React.FC = () => {
                   </div>
 
                   <button onClick={() => setGameState('LOBBY')} className="px-8 py-3 bg-slate-800 text-white font-bold rounded-xl w-full">VOLTAR AO LOBBY</button>
+              </div>
+          </div>
+      )}
+
+      {gameState === 'VICTORY' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-yellow-500/20 backdrop-blur-sm z-20">
+              <div className="bg-white p-12 rounded-3xl shadow-2xl border-4 border-yellow-400 text-center animate-in zoom-in-95 transform scale-110">
+                  <Trophy className="mx-auto text-yellow-500 mb-4 drop-shadow-lg" size={64} />
+                  <h2 className="text-4xl font-black text-slate-900 mb-2 tracking-tight">VITÓRIA!</h2>
+                  <p className="text-slate-500 mb-8 font-medium">Você é o último sobrevivente!</p>
+                  
+                  <div className="mb-8 p-4 bg-yellow-50 rounded-xl border border-yellow-200">
+                      <div className="text-xs font-bold text-yellow-600 uppercase mb-1">Bônus de Vitória</div>
+                      <div className="text-3xl font-black text-yellow-500">+5 EMPURRÕES</div>
+                  </div>
+
+                  <button onClick={() => setGameState('LOBBY')} className="px-8 py-3 bg-slate-800 text-white font-bold rounded-xl w-full shadow-xl">VOLTAR AO LOBBY</button>
               </div>
           </div>
       )}
