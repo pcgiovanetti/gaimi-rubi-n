@@ -8,6 +8,9 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ user, onLogin, onLogout }) => {
+  // Tenta pegar o nome salvo nos metadados, senão pega a primeira parte do email
+  const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0];
+
   return (
     <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-50">
       <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
@@ -29,7 +32,7 @@ const Header: React.FC<HeaderProps> = ({ user, onLogin, onLogout }) => {
           {user ? (
              <div className="flex items-center gap-3 pl-6 border-l border-slate-100">
                 <div className="text-right hidden sm:block">
-                  <div className="text-xs font-bold text-slate-900">{user.email?.split('@')[0]}</div>
+                  <div className="text-xs font-bold text-slate-900">{displayName}</div>
                   <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Online</div>
                 </div>
                 <button 

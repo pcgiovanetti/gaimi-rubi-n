@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { X, User, Lock, Loader2, LogIn } from 'lucide-react';
+import { X, User, Lock, Loader2, LogIn, Mail } from 'lucide-react';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -9,6 +9,7 @@ interface AuthModalProps {
 const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -18,35 +19,31 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
     setLoading(true);
     setError(null);
 
-    // Cria um email "fictício" baseado no nome para satisfazer o Supabase
-    // Ex: "Pedro Paulo" vira "pedropaulo@gaimirubi.com"
-    const cleanName = username.trim().toLowerCase().replace(/\s+/g, '');
-    const syntheticEmail = `${cleanName}@gaimirubi.com`;
-
     try {
       if (isLogin) {
+        // Login: Apenas Email e Senha
         const { error } = await supabase.auth.signInWithPassword({
-          email: syntheticEmail,
+          email,
           password,
         });
-        if (error) throw new Error("Usuário ou senha incorretos.");
+        if (error) throw new Error("Email ou senha incorretos.");
         onClose();
       } else {
+        // Cadastro: Nome, Email e Senha
         const { error, data } = await supabase.auth.signUp({
-          email: syntheticEmail,
+          email,
           password,
           options: {
             data: {
-              full_name: username, // Salva o nome original
+              full_name: username, // Salva o nome escolhido
             }
           }
         });
         
         if (error) throw error;
 
-        // Se o cadastro foi sucesso
         if (data.user) {
-            alert('Conta criada com sucesso! Você já pode entrar.');
+            alert('Conta criada com sucesso! Verifique se você já está logado ou faça login.');
             setIsLogin(true);
         }
       }
@@ -62,7 +59,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95">
         <div className="flex justify-between items-center p-6 border-b border-slate-100">
           <h2 className="text-xl font-bold text-slate-800">
-            {isLogin ? 'Bem-vindo de volta' : 'Criar Jogador'}
+            {isLogin ? 'Bem-vindo de volta' : 'Criar Conta'}
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X size={20} />
@@ -76,18 +73,36 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
             </div>
           )}
 
+          {/* Nome: Apenas no Cadastro */}
+          {!isLogin && (
+            <div className="space-y-2 animate-in slide-in-from-top-2">
+              <label className="text-xs font-bold text-slate-500 uppercase">Nome de Jogador</label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  type="text"
+                  required
+                  minLength={3}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                  placeholder="Seu apelido"
+                />
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase">Nome de Usuário</label>
+            <label className="text-xs font-bold text-slate-500 uppercase">Email</label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
               <input
-                type="text"
+                type="email"
                 required
-                minLength={3}
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
-                placeholder="Seu nome"
+                placeholder="seu@email.com"
               />
             </div>
           </div>
@@ -123,7 +138,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
               onClick={() => setIsLogin(!isLogin)}
               className="text-sm text-slate-500 hover:text-red-500 font-medium"
             >
-              {isLogin ? 'Não tem usuário? Crie agora' : 'Já tem cadastro? Entre'}
+              {isLogin ? 'Não tem conta? Crie agora' : 'Já tem conta? Entre'}
             </button>
           </div>
         </form>
