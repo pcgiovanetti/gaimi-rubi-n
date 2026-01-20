@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { X, User, Lock, Loader2, LogIn, Mail } from 'lucide-react';
+import { X, User, Lock, Loader2, LogIn, Mail, Eye, EyeOff } from 'lucide-react';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -11,6 +11,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,21 +22,24 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
 
     try {
       if (isLogin) {
-        // Login: Apenas Email e Senha
+        // Login
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
-        if (error) throw new Error("Email ou senha incorretos.");
+        if (error) {
+           // O erro "Invalid login credentials" pode ser senha errada OU email não confirmado
+           throw new Error("Erro: Verifique a senha ou se você confirmou o link no seu email.");
+        }
         onClose();
       } else {
-        // Cadastro: Nome, Email e Senha
+        // Cadastro
         const { error, data } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: {
-              full_name: username, // Salva o nome escolhido
+              full_name: username,
             }
           }
         });
@@ -43,8 +47,14 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
         if (error) throw error;
 
         if (data.user) {
-            alert('Conta criada com sucesso! Verifique se você já está logado ou faça login.');
-            setIsLogin(true);
+            // Verifica se o login foi automático ou se requer confirmação
+            if (data.session) {
+                alert('Conta criada e logada com sucesso!');
+                onClose();
+            } else {
+                alert(`Conta criada! Um link de confirmação foi enviado para ${email}. Confirme para entrar.`);
+                setIsLogin(true);
+            }
         }
       }
     } catch (err: any) {
@@ -68,12 +78,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
 
         <form onSubmit={handleAuth} className="p-6 space-y-4">
           {error && (
-            <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
+            <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 leading-tight">
               {error}
             </div>
           )}
 
-          {/* Nome: Apenas no Cadastro */}
           {!isLogin && (
             <div className="space-y-2 animate-in slide-in-from-top-2">
               <label className="text-xs font-bold text-slate-500 uppercase">Nome de Jogador</label>
@@ -112,14 +121,21 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
               <input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 required
                 minLength={6}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
+                className="w-full pl-10 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
                 placeholder="******"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
           </div>
 
@@ -135,7 +151,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
           <div className="text-center pt-2">
             <button
               type="button"
-              onClick={() => setIsLogin(!isLogin)}
+              onClick={() => {
+                  setIsLogin(!isLogin);
+                  setError(null);
+              }}
               className="text-sm text-slate-500 hover:text-red-500 font-medium"
             >
               {isLogin ? 'Não tem conta? Crie agora' : 'Já tem conta? Entre'}
