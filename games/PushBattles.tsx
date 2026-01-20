@@ -339,11 +339,27 @@ const PushBattles: React.FC = () => {
       const existing = ref.entities.find(e => e.id === data.id);
       
       if (existing) {
-          existing.x += (data.x - existing.x) * 0.3;
-          existing.y += (data.y - existing.y) * 0.3;
+          // Smooth Interpolation
+          const dist = Math.sqrt((data.x - existing.x)**2 + (data.y - existing.y)**2);
+          if (dist > 150) {
+              // Teleport if too far (likely lag spike or respawn)
+              existing.x = data.x;
+              existing.y = data.y;
+          } else {
+              // Interpolate
+              existing.x += (data.x - existing.x) * 0.25;
+              existing.y += (data.y - existing.y) * 0.25;
+          }
+          
+          existing.vx = data.vx || 0;
+          existing.vy = data.vy || 0;
           existing.facing = data.facing;
           existing.ability = data.ability;
           
+          if (data.stunned) {
+               existing.stunTimer = Math.max(existing.stunTimer, 5);
+          }
+
           if (data.dead && !existing.dead) {
               spawnParticles(existing.x, existing.y, existing.color, 20); // Death explosion
           }
@@ -679,9 +695,9 @@ const PushBattles: React.FC = () => {
             }
         }
 
-        if (gameMode === 'ONLINE' && player && !player.dead && channelRef.current) {
+        if (gameMode === 'ONLINE' && player && channelRef.current) {
             const now = Date.now();
-            if (now - ref.lastBroadcast > 50) {
+            if (now - ref.lastBroadcast > 30) { // Increased broadcast rate (33Hz)
                 channelRef.current.send({
                     type: 'broadcast',
                     event: 'player_update',
@@ -691,9 +707,12 @@ const PushBattles: React.FC = () => {
                         isAdmin: player.isAdmin,
                         x: player.x,
                         y: player.y,
+                        vx: player.vx,
+                        vy: player.vy,
                         facing: player.facing,
                         ability: player.ability,
-                        dead: player.dead
+                        dead: player.dead,
+                        stunned: player.stunTimer > 0
                     }
                 });
                 ref.lastBroadcast = now;
@@ -702,7 +721,15 @@ const PushBattles: React.FC = () => {
 
         ref.entities.forEach(e => {
             if (e.dead) return;
-            if (e.isRemote) return;
+            if (e.isRemote) {
+                // Apply slight prediction for remote players to keep them moving
+                if (Math.abs(e.vx) > 0.01) e.x += e.vx;
+                if (Math.abs(e.vy) > 0.01) e.y += e.vy;
+                e.vx *= FRICTION;
+                e.vy *= FRICTION;
+                if (e.stunTimer > 0) e.stunTimer--;
+                return;
+            }
 
             if (e.attackCooldown > 0) e.attackCooldown--;
             if (e.skillCooldown > 0) e.skillCooldown--;
@@ -991,10 +1018,15 @@ const PushBattles: React.FC = () => {
             if (e.stunTimer > 0) {
                  const time = Date.now() / 100;
                  ctx.fillStyle = '#fbbf24';
+                 // Stars over head
                  for(let i=0; i<3; i++) {
                       const starA = time + (Math.PI*2/3)*i;
                       ctx.beginPath(); ctx.arc(Math.cos(starA) * (e.radius + 5), Math.sin(starA) * 5 - e.radius - 5, 3, 0, Math.PI*2); ctx.fill();
                  }
+                 // Stun text
+                 ctx.font = 'bold 10px monospace';
+                 ctx.fillStyle = '#ef4444';
+                 ctx.fillText("STUNNED", 0, 8);
             }
 
             // Eyes
