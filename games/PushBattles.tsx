@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, X, Zap, Circle, Shield, Target, Globe, Users, Wifi } from 'lucide-react';
+import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Crosshair, Loader2, ShieldAlert } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+
+// Admin Configuration
+const ADMIN_EMAIL = "pcgiovanetti2011@gmail.com";
 
 interface Entity {
   id: string;
+  name: string; // Added Name
   x: number;
   y: number;
   vx: number;
@@ -11,10 +15,11 @@ interface Entity {
   radius: number;
   color: string;
   isPlayer: boolean;
-  isRemote?: boolean; // NEW: Distinguish network players
+  isAdmin: boolean; // Added Admin Flag
+  isRemote?: boolean; 
   
   // Ability System
-  ability: 'IMPACT' | 'DASH' | 'QUAKE';
+  ability: 'IMPACT' | 'DASH' | 'QUAKE' | 'SNIPER' | 'VORTEX';
   
   // Stats
   moveSpeed: number; 
@@ -28,6 +33,7 @@ interface Entity {
   attackCooldown: number; 
   skillCooldown: number;  
   maxSkillCooldown: number;
+  maxAttackCooldown: number;
 
   dead: boolean;
   facing: number; 
@@ -37,70 +43,157 @@ interface Entity {
 
 const ARENA_RADIUS = 600; 
 const PLAYER_RADIUS = 20;
-const FRICTION = 0.90; 
-const ATTACK_DURATION = 30; 
-const ATTACK_RADIUS = 35; 
+const FRICTION = 0.92;
+const ATTACK_DURATION = 20; 
+const ATTACK_RADIUS = 45;
+const PUSH_FORCE = 22.0;
 
 const ABILITIES = {
   IMPACT: {
     name: 'Super Impacto',
-    desc: 'Um empurrão massivo com longo alcance.',
+    desc: 'Empurrão médio equilibrado.',
     color: '#3b82f6',
     icon: <Target />,
     cooldown: 180, 
-    range: 140,
-    force: 25.0,
-    stun: 45
+    range: 160,
+    force: 35.0,
+    stun: 60,
+    reqPoints: 0
   },
   DASH: {
     name: 'Investida',
-    desc: 'Ganhe velocidade explosiva para atropelar.',
+    desc: 'Atropele inimigos com velocidade.',
     color: '#f59e0b',
     icon: <Zap />,
     cooldown: 120, 
-    range: 60,
-    force: 8.0,
-    stun: 20
+    range: 70,
+    force: 15.0,
+    stun: 30,
+    reqPoints: 50
   },
   QUAKE: {
     name: 'Terremoto',
-    desc: 'Atordoa inimigos próximos por muito tempo.',
+    desc: 'Atordoa área ao redor.',
     color: '#10b981',
-    icon: <Shield />,
+    icon: <Settings />, 
     cooldown: 300, 
-    range: 110,
-    force: 5.0,
-    stun: 150
+    range: 140,
+    force: 10.0,
+    stun: 180,
+    reqPoints: 150
+  },
+  SNIPER: {
+    name: 'Sniper',
+    desc: 'Alcance extremo, empurrão brutal.',
+    color: '#ef4444',
+    icon: <Crosshair />,
+    cooldown: 400, 
+    range: 400, 
+    force: 60.0,
+    stun: 90,
+    reqPoints: 300
+  },
+  VORTEX: {
+    name: 'Vórtice',
+    desc: 'Puxa inimigos para você.',
+    color: '#8b5cf6',
+    icon: <Wind />,
+    cooldown: 360, 
+    range: 250,
+    force: -15.0, 
+    stun: 45,
+    reqPoints: 500
   }
 };
+
+const BOT_NAMES = ["Bot Alpha", "Bot Beta", "Bot Gamma", "Bot Delta", "Bot Omega"];
 
 const PushBattles: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
   const [gameState, setGameState] = useState<'LOBBY' | 'PLAYING' | 'GAMEOVER'>('LOBBY');
-  const [gameMode, setGameMode] = useState<'BOTS' | 'ONLINE'>('BOTS'); // NEW
-  const [selectedAbility, setSelectedAbility] = useState<'IMPACT' | 'DASH' | 'QUAKE'>('IMPACT');
+  const [gameMode, setGameMode] = useState<'BOTS' | 'ONLINE'>('BOTS');
+  const [selectedAbility, setSelectedAbility] = useState<'IMPACT' | 'DASH' | 'QUAKE' | 'SNIPER' | 'VORTEX'>('IMPACT');
   const [highScore, setHighScore] = useState(0);
   const [onlineCount, setOnlineCount] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [careerPushes, setCareerPushes] = useState(0); 
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   
   const [showSettings, setShowSettings] = useState(false);
-  const [showHitbox, setShowHitbox] = useState(false);
 
-  // Supabase Channel Ref
   const channelRef = useRef<any>(null);
   const myIdRef = useRef<string>(Math.random().toString(36).substr(2, 9));
+  const myNameRef = useRef<string>("Player");
 
+  // Load User & Profile
   useEffect(() => {
-    const saved = localStorage.getItem('pushBattlesHigh');
-    if (saved) setHighScore(parseInt(saved));
+    const loadUser = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+            setUser(session.user);
+            myIdRef.current = session.user.id; 
+            
+            const email = session.user.email || "";
+            const isUserAdmin = email === ADMIN_EMAIL;
+            setIsAdmin(isUserAdmin);
+
+            const displayName = session.user.user_metadata.full_name || email.split('@')[0];
+            myNameRef.current = displayName;
+
+            // Fetch Profile Stats
+            const { data, error } = await supabase
+                .from('profiles')
+                .select('total_pushes')
+                .eq('id', session.user.id)
+                .single();
+            
+            if (data) {
+                setCareerPushes(data.total_pushes || 0);
+            } else {
+                if (error && error.code === 'PGRST116') {
+                    await supabase.from('profiles').insert({
+                        id: session.user.id,
+                        full_name: displayName,
+                        total_pushes: 0
+                    });
+                }
+            }
+        }
+        setLoadingProfile(false);
+    };
+    loadUser();
+
+    const savedHigh = localStorage.getItem('pushBattlesHigh');
+    if (savedHigh) setHighScore(parseInt(savedHigh));
 
     return () => {
-      // Cleanup channel on unmount
       if (channelRef.current) supabase.removeChannel(channelRef.current);
     };
   }, []);
+
+  const saveProgress = async (sessionPushes: number) => {
+      if (!user) return;
+      const newTotal = careerPushes + sessionPushes;
+      setCareerPushes(newTotal);
+
+      await supabase.from('profiles').upsert({
+          id: user.id,
+          total_pushes: newTotal,
+          updated_at: new Date()
+      });
+  };
+
+  // ADMIN FUNCTION
+  const handleAdminScoreChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!isAdmin || !user) return;
+      const val = parseInt(e.target.value) || 0;
+      setCareerPushes(val);
+      await supabase.from('profiles').update({ total_pushes: val }).eq('id', user.id);
+  };
 
   const gameRef = useRef({
     entities: [] as Entity[],
@@ -150,20 +243,23 @@ const PushBattles: React.FC = () => {
     // Add My Player
     ents.push({
       id: myIdRef.current,
+      name: myNameRef.current,
       x: (Math.random() - 0.5) * 200, 
       y: (Math.random() - 0.5) * 200,
       vx: 0, vy: 0,
       radius: PLAYER_RADIUS,
       color: abilityConfig.color,
       isPlayer: true,
+      isAdmin: isAdmin,
       ability: selectedAbility,
-      moveSpeed: 0.25,
+      moveSpeed: 0.30,
       isAttacking: false,
       attackTimer: 0,
       hitList: [],
       attackCooldown: 0,
       skillCooldown: 0,
       maxSkillCooldown: abilityConfig.cooldown,
+      maxAttackCooldown: 40,
       dead: false,
       facing: 0,
       stunTimer: 0,
@@ -175,7 +271,6 @@ const PushBattles: React.FC = () => {
         ents.push(createBot(i));
       }
     } else {
-       // ONLINE MODE SETUP
        await connectToRoom();
     }
 
@@ -221,24 +316,24 @@ const PushBattles: React.FC = () => {
       const existing = ref.entities.find(e => e.id === data.id);
       
       if (existing) {
-          // Interpolation target
           existing.x += (data.x - existing.x) * 0.3;
           existing.y += (data.y - existing.y) * 0.3;
           existing.facing = data.facing;
           existing.ability = data.ability;
           existing.dead = data.dead;
       } else if (!data.dead) {
-          // Create new remote player
           const config = ABILITIES[data.ability as keyof typeof ABILITIES] || ABILITIES.IMPACT;
           ref.entities.push({
               id: data.id,
+              name: data.name || "Unknown",
               x: data.x,
               y: data.y,
               vx: 0, vy: 0,
               radius: PLAYER_RADIUS,
               color: config.color,
               isPlayer: false,
-              isRemote: true, // Mark as remote
+              isAdmin: data.isAdmin, // Receive admin status
+              isRemote: true,
               ability: data.ability,
               moveSpeed: 0,
               isAttacking: false,
@@ -247,6 +342,7 @@ const PushBattles: React.FC = () => {
               attackCooldown: 0,
               skillCooldown: 0,
               maxSkillCooldown: 0,
+              maxAttackCooldown: 40,
               dead: false,
               facing: data.facing,
               stunTimer: 0,
@@ -263,13 +359,8 @@ const PushBattles: React.FC = () => {
               ent.attackTimer = ATTACK_DURATION;
           } else if (data.type === 'SKILL') {
               ent.skillAnim = 15;
-              // Visual only for remote skill
               const config = ABILITIES[ent.ability];
-              if (ent.ability !== 'DASH') {
-                  spawnShockwave(ent.x, ent.y, config.range, config.color, 10);
-              } else {
-                  spawnParticles(ent.x, ent.y, '#f59e0b', 10);
-              }
+              spawnShockwave(ent.x, ent.y, config.range, config.color, 10);
           }
       }
   };
@@ -278,25 +369,29 @@ const PushBattles: React.FC = () => {
      const angle = (Math.PI * 2 / 4) * index;
      const dist = 300;
      const abilityKeys = Object.keys(ABILITIES) as Array<keyof typeof ABILITIES>;
-     const randomAbility = abilityKeys[Math.floor(Math.random() * abilityKeys.length)];
+     const simpleAbilities = ['IMPACT', 'DASH', 'QUAKE'];
+     const randomAbility = simpleAbilities[Math.floor(Math.random() * simpleAbilities.length)] as keyof typeof ABILITIES;
      const config = ABILITIES[randomAbility];
 
      return {
          id: `bot-${Math.random()}`,
+         name: BOT_NAMES[index] || `Bot ${index}`,
          x: Math.cos(angle) * dist,
          y: Math.sin(angle) * dist,
          vx: 0, vy: 0,
          radius: PLAYER_RADIUS,
-         color: '#ef4444', 
+         color: config.color, 
          isPlayer: false,
+         isAdmin: false,
          ability: randomAbility,
-         moveSpeed: 0.22,
+         moveSpeed: 0.25,
          isAttacking: false,
          attackTimer: 0,
          hitList: [],
          attackCooldown: 0,
          skillCooldown: 0,
          maxSkillCooldown: config.cooldown,
+         maxAttackCooldown: 40,
          dead: false,
          facing: angle + Math.PI, 
          stunTimer: 0,
@@ -320,7 +415,6 @@ const PushBattles: React.FC = () => {
     window.addEventListener('resize', resize);
     resize();
 
-    // Input handlers same as before...
     const handleKeyDown = (e: KeyboardEvent) => {
         const k = gameRef.current.keys;
         if (e.code === 'KeyW' || e.code === 'ArrowUp') k.up = true;
@@ -340,7 +434,6 @@ const PushBattles: React.FC = () => {
         if (e.code === 'KeyE') k.skill = false;
     };
 
-    // Mobile inputs same as before...
     const getTouchPos = (touch: React.Touch | Touch) => {
         const rect = canvas.getBoundingClientRect();
         return {
@@ -428,15 +521,16 @@ const PushBattles: React.FC = () => {
         const ref = gameRef.current;
         const player = ref.entities.find(e => e.isPlayer);
         
-        // Broadcast local player state
         if (gameMode === 'ONLINE' && player && !player.dead && channelRef.current) {
             const now = Date.now();
-            if (now - ref.lastBroadcast > 50) { // Limit broadcast rate (20hz)
+            if (now - ref.lastBroadcast > 50) {
                 channelRef.current.send({
                     type: 'broadcast',
                     event: 'player_update',
                     payload: {
                         id: player.id,
+                        name: player.name, // Send name
+                        isAdmin: player.isAdmin, // Send admin status
                         x: player.x,
                         y: player.y,
                         facing: player.facing,
@@ -450,8 +544,6 @@ const PushBattles: React.FC = () => {
 
         ref.entities.forEach(e => {
             if (e.dead) return;
-
-            // Remote players don't have physics logic updated here, only visual interpolation
             if (e.isRemote) return;
 
             if (e.attackCooldown > 0) e.attackCooldown--;
@@ -462,7 +554,6 @@ const PushBattles: React.FC = () => {
                 e.attackTimer--;
                 
                 ref.entities.forEach(target => {
-                    // Friendly fire off, don't hit self, don't hit dead
                     if (target.id === e.id || target.dead || e.hitList.includes(target.id)) return;
                     
                     const dx = target.x - e.x;
@@ -472,16 +563,10 @@ const PushBattles: React.FC = () => {
                     if (dist < ATTACK_RADIUS + target.radius) {
                         e.hitList.push(target.id);
                         
-                        // Physics only apply if I am master of the target (Bots) OR if target is me
-                        // But in simple p2p, everyone is master of themselves.
-                        // So if I hit a remote player, I see them move, but they might not feel it unless I send an event.
-                        // For simplicity: Visual knockback only on remote, authoritative knockback on bots.
-                        
                         if (!target.isRemote) {
                              const angle = Math.atan2(dy, dx);
-                             const force = 12.0;
-                             target.vx += Math.cos(angle) * force;
-                             target.vy += Math.sin(angle) * force;
+                             target.vx += Math.cos(angle) * PUSH_FORCE;
+                             target.vy += Math.sin(angle) * PUSH_FORCE;
                              target.stunTimer = 45;
                         }
                         
@@ -523,7 +608,6 @@ const PushBattles: React.FC = () => {
                         e.vy += (ref.joystick.dy / 50) * speed;
                     }
                 } else {
-                    // BOT LOGIC
                     let target = null;
                     let minDist = 9999;
                     
@@ -555,7 +639,7 @@ const PushBattles: React.FC = () => {
                         e.vx += Math.cos(e.facing + randomWobble) * (e.moveSpeed * 0.8);
                         e.vy += Math.sin(e.facing + randomWobble) * (e.moveSpeed * 0.8);
 
-                        if (minDist < 60 && e.attackCooldown <= 0 && !e.isAttacking && Math.random() < 0.05) {
+                        if (minDist < 80 && e.attackCooldown <= 0 && !e.isAttacking && Math.random() < 0.05) {
                             startBasicAttack(e);
                         }
                         
@@ -564,7 +648,6 @@ const PushBattles: React.FC = () => {
                         }
                     }
                     
-                    // Keep bots in arena
                     const distFromCenter = Math.sqrt(e.x*e.x + e.y*e.y);
                     if (distFromCenter > ARENA_RADIUS * 0.9) {
                         const angle = Math.atan2(0 - e.y, 0 - e.x);
@@ -612,9 +695,9 @@ const PushBattles: React.FC = () => {
                 spawnParticles(e.x, e.y, e.color, 20);
                 
                 if (e.isPlayer) {
+                    saveProgress(ref.currentScore);
                     setTimeout(() => setGameState('GAMEOVER'), 1000);
                 } else if (!e.isRemote) {
-                    // Respawn Bots
                     setTimeout(() => {
                          const newBot = createBot(Math.floor(Math.random()*4));
                          const idx = ref.entities.findIndex(ent => ent.id === e.id);
@@ -640,7 +723,7 @@ const PushBattles: React.FC = () => {
     const startBasicAttack = (user: Entity) => {
         user.isAttacking = true;
         user.attackTimer = ATTACK_DURATION;
-        user.attackCooldown = 50; 
+        user.attackCooldown = user.maxAttackCooldown; 
         user.hitList = []; 
     };
 
@@ -650,12 +733,27 @@ const PushBattles: React.FC = () => {
         user.skillAnim = 15;
 
         if (user.ability === 'DASH') {
-             user.vx += Math.cos(user.facing) * 35;
-             user.vy += Math.sin(user.facing) * 35;
-             spawnParticles(user.x, user.y, '#f59e0b', 10);
+             user.vx += Math.cos(user.facing) * 45; 
+             user.vy += Math.sin(user.facing) * 45;
+             spawnParticles(user.x, user.y, config.color, 10);
              applySkillEffect(user, config.range, config.force, config.stun);
         } else {
-             spawnShockwave(user.x, user.y, config.range, config.color, 20);
+             if (user.ability === 'VORTEX') {
+                 for(let i=0; i<8; i++) {
+                     const angle = (Math.PI * 2 / 8) * i;
+                     const range = config.range;
+                     gameRef.current.particles.push({
+                         x: user.x + Math.cos(angle) * range,
+                         y: user.y + Math.sin(angle) * range,
+                         vx: Math.cos(angle + Math.PI) * 10,
+                         vy: Math.sin(angle + Math.PI) * 10,
+                         life: 0.5,
+                         color: config.color
+                     });
+                 }
+             } else {
+                 spawnShockwave(user.x, user.y, config.range, config.color, 20);
+             }
              applySkillEffect(user, config.range, config.force, config.stun);
         }
     };
@@ -664,7 +762,6 @@ const PushBattles: React.FC = () => {
         const ref = gameRef.current;
         ref.entities.forEach(target => {
             if (target.id === user.id || target.dead) return;
-            // In online mode, I only calculate physics for bots, not other players
             if (gameMode === 'ONLINE' && target.isRemote) return;
 
             const dx = target.x - user.x;
@@ -740,38 +837,45 @@ const PushBattles: React.FC = () => {
             ctx.save();
             ctx.translate(e.x, e.y);
             
-            // Hitbox debug
-            if (showHitbox) {
-                ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1; ctx.stroke();
-            }
-
-            // Attack Visual
             if (e.isAttacking) {
-                ctx.beginPath(); ctx.arc(0, 0, ATTACK_RADIUS, 0, Math.PI*2); ctx.fillStyle = 'rgba(255,255,255, 0.2)'; ctx.fill();
-                const pulse = (Date.now() % 500) / 500;
-                ctx.strokeStyle = `rgba(255,255,255, ${1 - pulse})`; ctx.lineWidth = 2 + (pulse * 2);
-                ctx.beginPath(); ctx.arc(0, 0, ATTACK_RADIUS + (pulse * 5), 0, Math.PI*2); ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(0, 0, ATTACK_RADIUS + 5, 0, Math.PI * 2); 
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.2)'; 
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
             }
 
-            // Skill Visual
             if (e.skillAnim > 0) {
                 const progress = 1 - (e.skillAnim / 15);
                 const maxRange = ABILITIES[e.ability].range;
                 ctx.beginPath(); ctx.arc(0, 0, maxRange * progress, 0, Math.PI*2); ctx.fillStyle = e.color + '66'; ctx.fill();
             }
             
+            // Name Tag & Admin Title
+            ctx.save();
+            ctx.fillStyle = e.isAdmin ? '#fbbf24' : '#64748b'; // Gold for Admin, Slate for others
+            if (e.isAdmin) ctx.shadowBlur = 5;
+            if (e.isAdmin) ctx.shadowColor = '#fbbf24';
+            
+            ctx.font = e.isAdmin ? 'bold 12px monospace' : 'bold 11px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(e.name.toUpperCase(), 0, -e.radius - 12);
+            ctx.restore();
+
             // Body
             ctx.fillStyle = e.stunTimer > 0 ? '#94a3b8' : e.color; 
-            ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
             
-            // Name tag for online
-            if (e.isRemote) {
-                ctx.fillStyle = '#94a3b8';
-                ctx.font = '10px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('PLAYER', 0, -e.radius - 10);
+            // Admin Glow
+            if (e.isAdmin) {
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = e.color;
             }
-
+            
+            ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0; // Reset
+            
             // Direction indicator
             if (!e.isPlayer) {
                 ctx.rotate(e.facing);
@@ -780,7 +884,6 @@ const PushBattles: React.FC = () => {
                 ctx.rotate(-e.facing);
             }
             
-            // Stun Stars
             if (e.stunTimer > 0) {
                  const time = Date.now() / 100;
                  ctx.fillStyle = '#fbbf24';
@@ -807,7 +910,33 @@ const PushBattles: React.FC = () => {
 
         ctx.restore();
 
-        // HUD
+        // --- HUD ---
+        const player = getPlayer();
+        if (player && !player.dead) {
+             const barW = 100;
+             const barH = 8;
+             const centerX = width / 2;
+             const bottomY = height - 40;
+
+             // Attack Cooldown
+             const atkPct = Math.max(0, 1 - (player.attackCooldown / player.maxAttackCooldown));
+             ctx.fillStyle = '#1e293b';
+             ctx.fillRect(centerX - barW - 10, bottomY, barW, barH);
+             ctx.fillStyle = atkPct === 1 ? '#ef4444' : '#64748b';
+             ctx.fillRect(centerX - barW - 10, bottomY, barW * atkPct, barH);
+             ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'right';
+             ctx.fillText('EMPURRÃO (SPC)', centerX - 15, bottomY - 5);
+
+             // Skill Cooldown
+             const skillPct = Math.max(0, 1 - (player.skillCooldown / player.maxSkillCooldown));
+             ctx.fillStyle = '#1e293b';
+             ctx.fillRect(centerX + 10, bottomY, barW, barH);
+             ctx.fillStyle = skillPct === 1 ? player.color : '#64748b';
+             ctx.fillRect(centerX + 10, bottomY, barW * skillPct, barH);
+             ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left';
+             ctx.fillText('HABILIDADE (E)', centerX + 15, bottomY - 5);
+        }
+
         ctx.fillStyle = '#0f172a';
         ctx.font = 'bold 24px monospace';
         ctx.textAlign = 'left';
@@ -822,7 +951,6 @@ const PushBattles: React.FC = () => {
             ctx.fillText(isConnected ? `ONLINE: ${onlineCount}` : 'CONECTANDO...', 20, 90);
         }
 
-        // Joystick
         if (ref.joystick.active) {
             ctx.beginPath(); ctx.arc(ref.joystick.x, ref.joystick.y, 50, 0, Math.PI*2); ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineWidth = 4; ctx.stroke();
             ctx.beginPath(); ctx.arc(ref.joystick.x + ref.joystick.dx, ref.joystick.y + ref.joystick.dy, 25, 0, Math.PI*2); ctx.fillStyle = 'rgba(239, 68, 68, 0.5)'; ctx.fill();
@@ -846,7 +974,7 @@ const PushBattles: React.FC = () => {
         canvas.removeEventListener('touchend', handleTouchEnd);
         cancelAnimationFrame(gameRef.current.animationId);
     };
-  }, [gameState, selectedAbility, showHitbox, gameMode, isConnected, onlineCount]);
+  }, [gameState, selectedAbility, gameMode, isConnected, onlineCount, user, careerPushes, isAdmin]);
 
   const getPlayer = () => gameRef.current.entities.find(e => e.isPlayer);
 
@@ -855,19 +983,48 @@ const PushBattles: React.FC = () => {
       <canvas ref={canvasRef} className="block w-full h-full touch-none" />
       
       {gameState === 'LOBBY' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-sm z-20">
-              <div className="bg-white p-8 rounded-3xl shadow-2xl border border-slate-100 max-w-2xl w-full animate-in zoom-in-95 relative">
+          <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-sm z-20 overflow-y-auto py-8">
+              <div className="bg-white p-8 rounded-3xl shadow-2xl border border-slate-100 max-w-4xl w-full animate-in zoom-in-95 relative my-auto">
                   
                   <button onClick={() => setShowSettings(true)} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-700 bg-slate-50 rounded-full hover:bg-slate-100 transition-colors">
                       <Settings size={20} />
                   </button>
 
-                  <h2 className="text-4xl font-black text-slate-800 mb-2 text-center">PUSH BATTLES</h2>
-                  <div className="text-center mb-6">
-                      <p className="text-slate-400">Escolha sua Habilidade</p>
+                  <div className="text-center mb-8">
+                    <h2 className="text-4xl font-black text-slate-800 mb-2">PUSH BATTLES</h2>
+                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full text-slate-600 font-bold text-sm">
+                        {loadingProfile ? <Loader2 className="animate-spin" size={14} /> : (
+                            <>
+                                <Target size={14} className="text-red-500" />
+                                <span>TOTAL DE EMPURRÕES: {careerPushes}</span>
+                            </>
+                        )}
+                    </div>
                   </div>
 
-                  {/* Mode Selector */}
+                  {/* ADMIN CONTROL PANEL */}
+                  {isAdmin && (
+                      <div className="mb-6 p-4 bg-slate-800 rounded-xl border-l-4 border-yellow-500 shadow-xl">
+                          <div className="flex items-center gap-2 mb-3 text-yellow-400 font-bold text-xs uppercase tracking-widest">
+                              <ShieldAlert size={14} /> Admin Control
+                          </div>
+                          <div className="flex items-center gap-4">
+                              <div className="flex-1">
+                                  <label className="text-xs text-slate-400 block mb-1">Set Career Pushes</label>
+                                  <input 
+                                    type="number" 
+                                    value={careerPushes} 
+                                    onChange={handleAdminScoreChange}
+                                    className="w-full bg-slate-900 border border-slate-700 text-white px-3 py-2 rounded-lg font-mono"
+                                  />
+                              </div>
+                              <div className="text-xs text-slate-500 max-w-[150px]">
+                                  Alterar este valor desbloqueia habilidades instantaneamente.
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
                   <div className="flex justify-center gap-4 mb-6">
                       <button 
                         onClick={() => setGameMode('BOTS')}
@@ -883,22 +1040,39 @@ const PushBattles: React.FC = () => {
                       </button>
                   </div>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                      {(Object.entries(ABILITIES) as [keyof typeof ABILITIES, any][]).map(([key, data]) => (
-                          <button 
-                            key={key}
-                            onClick={() => setSelectedAbility(key)}
-                            className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${selectedAbility === key ? 'border-red-500 bg-red-50' : 'border-slate-100 hover:border-slate-300'}`}
-                          >
-                              <div className="w-16 h-16 rounded-full flex items-center justify-center text-white shadow-md" style={{ backgroundColor: data.color }}>
-                                  {data.icon}
-                              </div>
-                              <div className="text-center">
-                                  <div className="font-bold text-slate-800">{data.name}</div>
-                                  <div className="text-xs text-slate-500 mt-2">{data.desc}</div>
-                              </div>
-                          </button>
-                      ))}
+                  <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-8">
+                      {(Object.entries(ABILITIES) as [keyof typeof ABILITIES, any][]).map(([key, data]) => {
+                          const isLocked = careerPushes < data.reqPoints;
+                          const isSelected = selectedAbility === key;
+                          
+                          return (
+                            <button 
+                                key={key}
+                                onClick={() => !isLocked && setSelectedAbility(key)}
+                                disabled={isLocked}
+                                className={`
+                                    relative p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-3
+                                    ${isSelected ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-white hover:border-slate-300'}
+                                    ${isLocked ? 'opacity-60 cursor-not-allowed bg-slate-50' : 'cursor-pointer'}
+                                `}
+                            >
+                                {isLocked && (
+                                    <div className="absolute inset-0 bg-slate-100/50 flex flex-col items-center justify-center rounded-2xl z-10 backdrop-blur-[1px]">
+                                        <Lock className="text-slate-400 mb-1" size={24} />
+                                        <div className="text-xs font-bold text-slate-500 bg-white px-2 py-1 rounded-full shadow-sm">{data.reqPoints} pts</div>
+                                    </div>
+                                )}
+
+                                <div className="w-12 h-12 rounded-full flex items-center justify-center text-white shadow-md transition-transform" style={{ backgroundColor: isLocked ? '#94a3b8' : data.color }}>
+                                    {data.icon}
+                                </div>
+                                <div className="text-center w-full">
+                                    <div className="font-bold text-slate-800 text-sm">{data.name}</div>
+                                    <div className="text-[10px] text-slate-500 mt-1 leading-tight">{data.desc}</div>
+                                </div>
+                            </button>
+                          );
+                      })}
                   </div>
 
                   <button 
@@ -918,16 +1092,8 @@ const PushBattles: React.FC = () => {
                        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Settings size={18} /> Configurações</h3>
                        <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
                    </div>
-                   <div className="space-y-4">
-                       <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                           <div className="flex items-center gap-3">
-                               <Circle size={16} className={showHitbox ? "text-green-500 fill-current" : "text-slate-300"} />
-                               <span className="text-sm font-medium text-slate-700">Mostrar Hitboxes</span>
-                           </div>
-                           <button onClick={() => setShowHitbox(!showHitbox)} className={`w-12 h-6 rounded-full p-1 transition-colors ${showHitbox ? 'bg-green-500' : 'bg-slate-300'}`}>
-                               <div className={`w-4 h-4 bg-white rounded-full transition-transform ${showHitbox ? 'translate-x-6' : 'translate-x-0'}`} />
-                           </button>
-                       </div>
+                   <div className="p-4 bg-slate-50 rounded-lg text-sm text-slate-500">
+                       Controles: WASD ou Setas para mover. Espaço para atacar. E para habilidade.
                    </div>
                    <button onClick={() => setShowSettings(false)} className="w-full mt-6 py-2 bg-slate-800 text-white rounded-lg font-bold text-sm">Fechar</button>
                </div>
@@ -938,8 +1104,14 @@ const PushBattles: React.FC = () => {
           <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-sm z-20">
               <div className="bg-white p-8 rounded-3xl shadow-2xl border border-slate-100 text-center animate-in zoom-in-95">
                   <h2 className="text-3xl font-black text-slate-800 mb-2">VOCÊ CAIU!</h2>
-                  <p className="text-slate-500 mb-6">Empurrões: <span className="font-bold text-red-500">{gameRef.current.currentScore}</span></p>
-                  <button onClick={() => setGameState('LOBBY')} className="px-8 py-3 bg-slate-800 text-white font-bold rounded-xl">VOLTAR AO LOBBY</button>
+                  <p className="text-slate-500 mb-6">Empurrões nesta partida: <span className="font-bold text-red-500">{gameRef.current.currentScore}</span></p>
+                  
+                  <div className="mb-6 p-4 bg-slate-50 rounded-xl">
+                      <div className="text-xs font-bold text-slate-400 uppercase">Total Carreira</div>
+                      <div className="text-2xl font-black text-slate-800">{careerPushes}</div>
+                  </div>
+
+                  <button onClick={() => setGameState('LOBBY')} className="px-8 py-3 bg-slate-800 text-white font-bold rounded-xl w-full">VOLTAR AO LOBBY</button>
               </div>
           </div>
       )}

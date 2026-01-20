@@ -1,5 +1,5 @@
 import React from 'react';
-import { Gem, User, LogOut } from 'lucide-react';
+import { Gem, User, LogOut, Crown } from 'lucide-react';
 
 interface HeaderProps {
   user: any;
@@ -8,8 +8,13 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ user, onLogin, onLogout }) => {
+  const isAdmin = user?.email === 'pcgiovanetti2011@gmail.com';
+  
   // Tenta pegar o nome salvo nos metadados, senão pega a primeira parte do email
-  const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0];
+  let displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0];
+  
+  // Enforce official name for admin
+  if (isAdmin) displayName = "pcgiovanetti";
 
   return (
     <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-50">
@@ -32,8 +37,11 @@ const Header: React.FC<HeaderProps> = ({ user, onLogin, onLogout }) => {
           {user ? (
              <div className="flex items-center gap-3 pl-6 border-l border-slate-100">
                 <div className="text-right hidden sm:block">
-                  <div className="text-xs font-bold text-slate-900">{displayName}</div>
-                  <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Online</div>
+                  <div className={`text-xs font-bold flex items-center justify-end gap-1 ${isAdmin ? 'text-yellow-500' : 'text-slate-900'}`}>
+                      {displayName}
+                      {isAdmin && <Crown size={12} fill="currentColor" />}
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">{isAdmin ? 'Official Account' : 'Online'}</div>
                 </div>
                 <button 
                   onClick={onLogout}
