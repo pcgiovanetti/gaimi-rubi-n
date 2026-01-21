@@ -1,9 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Crosshair, Loader2, ShieldAlert, Trophy, Circle, Hexagon, Triangle, Square, Star, Crown } from 'lucide-react';
+import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Crosshair, Loader2, ShieldAlert, Trophy, Circle, Hexagon, Triangle, Square, Star, Crown, Box, Ghost, Anchor, RefreshCw, Link, MousePointer2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 // Admin Configuration
 const ADMIN_EMAIL = "pcgiovanetti2011@gmail.com";
+
+interface Trap {
+    id: string;
+    x: number;
+    y: number;
+    radius: number;
+    ownerId: string;
+    type: 'LEGO' | 'MINE';
+    color: string;
+    active: boolean;
+}
 
 interface Entity {
   id: string;
@@ -23,18 +34,28 @@ interface Entity {
   
   // Stats
   moveSpeed: number; 
+  mass: number; 
+  invisible: boolean; 
+  invulnerable: boolean; // For Repulsor
   
   // Attack Logic
   isAttacking: boolean;
   attackTimer: number; 
   hitList: string[];
-  lastAttackerId: string | null; // Tracks who pushed me last
+  lastAttackerId: string | null; 
+  
+  // Visuals
+  hookTarget?: { x: number, y: number }; // For Hook visual
   
   // Cooldowns
   attackCooldown: number; 
   skillCooldown: number;  
   maxSkillCooldown: number;
   maxAttackCooldown: number;
+  
+  // Passive Logic
+  passiveTimer: number;
+  maxPassiveTimer: number;
 
   dead: boolean;
   facing: number; 
@@ -42,7 +63,7 @@ interface Entity {
   skillAnim: number; 
 }
 
-const ARENA_RADIUS = 600; 
+const ARENA_RADIUS = 660; 
 const PLAYER_RADIUS = 20;
 const FRICTION = 0.92;
 const ATTACK_DURATION = 15; 
@@ -51,37 +72,58 @@ const PUSH_FORCE = 22.0;
 
 // --- ABILITIES CONFIGURATION ---
 const ABILITIES: Record<string, any> = {
-  // STARTING
-  IMPACT: { name: 'Super Impacto', desc: 'Empurrão equilibrado.', color: '#3b82f6', icon: <Target />, cooldown: 180, range: 160, force: 35.0, stun: 60, reqPoints: 0 },
+  // --- STARTER ---
+  IMPACT: { 
+      type: 'ACTIVE', name: 'Impacto', desc: '[ATIVO] Empurrão clássico em área.', 
+      color: '#3b82f6', icon: <Target />, cooldown: 180, range: 160, force: 35.0, stun: 60, reqPoints: 0 
+  },
   
-  // TIER 1 (Low Cost)
-  DASH: { name: 'Investida', desc: 'Atropele com velocidade.', color: '#f59e0b', icon: <Zap />, cooldown: 120, range: 70, force: 15.0, stun: 30, reqPoints: 50 },
-  SHIELD: { name: 'Repulsão', desc: 'Empurrão defensivo curto.', color: '#64748b', icon: <ShieldAlert />, cooldown: 100, range: 100, force: 40.0, stun: 20, reqPoints: 100 },
-  SHOTGUN: { name: 'Dispersão', desc: 'Cone de força bruta.', color: '#78716c', icon: <Triangle />, cooldown: 150, range: 180, force: 45.0, stun: 40, reqPoints: 150 },
+  // --- TIER 1 (Tactical) ---
+  LEGO: { 
+      type: 'PASSIVE', name: 'Lego', desc: '[PASSIVO] Solta blocos no chão.', 
+      color: '#ef4444', icon: <Box />, cooldown: 0, passiveCooldown: 240, range: 0, force: 0, stun: 0, reqPoints: 50 
+  },
+  DASH: { 
+      type: 'ACTIVE', name: 'Dash', desc: '[ATIVO] Aceleração explosiva.', 
+      color: '#f59e0b', icon: <Wind />, cooldown: 120, range: 0, force: 20.0, stun: 30, reqPoints: 100 
+  },
   
-  // TIER 2 (Mid Cost)
-  QUAKE: { name: 'Terremoto', desc: 'Atordoa área ao redor.', color: '#10b981', icon: <Settings />, cooldown: 300, range: 140, force: 10.0, stun: 180, reqPoints: 200 },
-  FROST: { name: 'Congelar', desc: 'Muito stun, pouco empurrão.', color: '#06b6d4', icon: <Wind />, cooldown: 250, range: 200, force: 5.0, stun: 240, reqPoints: 300 },
-  SNIPER: { name: 'Sniper', desc: 'Alcance extremo.', color: '#ef4444', icon: <Crosshair />, cooldown: 400, range: 450, force: 60.0, stun: 90, reqPoints: 400 },
+  // --- TIER 2 (Defensive/Tricky) ---
+  SPIKES: { 
+      type: 'PASSIVE', name: 'Espinhos', desc: '[PASSIVO] Dano ao contato.', 
+      color: '#64748b', icon: <Triangle />, cooldown: 0, passiveCooldown: 60, range: 40, force: 15.0, stun: 10, reqPoints: 200 
+  },
+  FLASH: { 
+      type: 'ACTIVE', name: 'Flash', desc: '[ATIVO] Teleporte instantâneo.', 
+      color: '#ec4899', icon: <Zap />, cooldown: 200, range: 250, force: 0, stun: 0, reqPoints: 300 
+  },
+
+  // --- TIER 3 (Specialist) ---
+  HOOK: { 
+      type: 'ACTIVE', name: 'Gancho', desc: '[ATIVO] Puxa um inimigo até você.', 
+      color: '#d97706', icon: <Link />, cooldown: 300, range: 400, force: -15.0, stun: 60, reqPoints: 500 
+  },
+  GHOST: { 
+      type: 'ACTIVE', name: 'Fantasma', desc: '[ATIVO] Invisível e intangível.', 
+      color: '#cbd5e1', icon: <Ghost />, cooldown: 450, range: 0, force: 0, stun: 0, reqPoints: 750 
+  },
   
-  // TIER 3 (High Cost)
-  VORTEX: { name: 'Vórtice', desc: 'Puxa inimigos para você.', color: '#8b5cf6', icon: <Wind />, cooldown: 360, range: 250, force: -20.0, stun: 45, reqPoints: 500 },
-  EXPLOSION: { name: 'Explosão', desc: 'Empurrão massivo em área.', color: '#f97316', icon: <Star />, cooldown: 450, range: 220, force: 55.0, stun: 100, reqPoints: 750 },
-  BLINK: { name: 'Blink', desc: 'Teleporte instantâneo.', color: '#ec4899', icon: <Circle />, cooldown: 200, range: 300, force: 0, stun: 0, reqPoints: 1000 },
-  
-  // TIER 4 (Legendary)
-  GRAVITY: { name: 'Gravidade', desc: 'Puxa todos muito forte.', color: '#4c1d95', icon: <Hexagon />, cooldown: 600, range: 400, force: -40.0, stun: 60, reqPoints: 1500 },
-  BERSERK: { name: 'Fúria', desc: 'Dash + Empurrão Violento.', color: '#be123c', icon: <Zap />, cooldown: 300, range: 100, force: 80.0, stun: 120, reqPoints: 2000 },
-  SHOCKWAVE: { name: 'Onda Choque', desc: 'Empurrão global fraco.', color: '#eab308', icon: <Wind />, cooldown: 600, range: 600, force: 15.0, stun: 10, reqPoints: 2500 },
-  SUMO: { name: 'Sumô', desc: 'Empurrão curto, cooldown baixo.', color: '#9f1239', icon: <Square />, cooldown: 60, range: 80, force: 25.0, stun: 20, reqPoints: 3000 },
-  PHANTOM: { name: 'Fantasma', desc: 'Stun massivo à distância.', color: '#cbd5e1', icon: <Globe />, cooldown: 400, range: 300, force: 0.0, stun: 300, reqPoints: 4000 },
+  // --- TIER 4 (Chaos) ---
+  SWAP: { 
+      type: 'ACTIVE', name: 'Troca', desc: '[ATIVO] Troca de lugar com inimigo.', 
+      color: '#8b5cf6', icon: <RefreshCw />, cooldown: 600, range: 500, force: 0, stun: 20, reqPoints: 1000 
+  },
+  REPULSOR: { 
+      type: 'ACTIVE', name: 'Repulsor', desc: '[ATIVO] Reflete ataques por 2s.', 
+      color: '#10b981', icon: <ShieldAlert />, cooldown: 400, range: 0, force: 0, stun: 0, reqPoints: 1500 
+  },
+  MASS: { 
+      type: 'PASSIVE', name: 'Colosso', desc: '[PASSIVO] Imune a empurrões leves.', 
+      color: '#1e293b', icon: <Anchor />, cooldown: 0, passiveCooldown: 0, range: 0, force: 0, stun: 0, reqPoints: 2000 
+  },
 
   // --- DEV ONLY (ADMIN) ---
-  DEV_NOVA: { name: '[DEV] NOVA', desc: 'Limpa a tela.', color: '#fbbf24', icon: <Crown />, cooldown: 30, range: 800, force: 150.0, stun: 300, reqPoints: 999999 },
-  DEV_BLACKHOLE: { name: '[DEV] B.HOLE', desc: 'Sugador de Almas.', color: '#000000', icon: <Crown />, cooldown: 30, range: 1000, force: -80.0, stun: 300, reqPoints: 999999 },
-  DEV_SPEED: { name: '[DEV] FLASH', desc: 'Teleporte Infinito.', color: '#22c55e', icon: <Crown />, cooldown: 10, range: 600, force: 0, stun: 0, reqPoints: 999999 },
-  DEV_FREEZE: { name: '[DEV] FREEZE', desc: 'Para o tempo.', color: '#38bdf8', icon: <Crown />, cooldown: 60, range: 2000, force: 0.0, stun: 600, reqPoints: 999999 },
-  DEV_NUKE: { name: '[DEV] NUKE', desc: 'Morte Instantânea.', color: '#dc2626', icon: <Crown />, cooldown: 120, range: 500, force: 500.0, stun: 999, reqPoints: 999999 },
+  DEV_NOVA: { type: 'ACTIVE', name: '[DEV] NOVA', desc: 'Limpa a tela.', color: '#fbbf24', icon: <Crown />, cooldown: 30, range: 800, force: 150.0, stun: 300, reqPoints: 999999 },
 };
 
 const BOT_NAMES = ["Bot Alpha", "Bot Beta", "Bot Gamma", "Bot Delta", "Bot Omega"];
@@ -102,7 +144,9 @@ const PushBattles: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
   
+  // Settings
   const [showSettings, setShowSettings] = useState(false);
+  const [proAim, setProAim] = useState(false);
 
   const channelRef = useRef<any>(null);
   const myIdRef = useRef<string>(Math.random().toString(36).substr(2, 9));
@@ -123,24 +167,9 @@ const PushBattles: React.FC = () => {
             const displayName = session.user.user_metadata.full_name || email.split('@')[0];
             myNameRef.current = displayName;
 
-            // Fetch Profile Stats
-            const { data, error } = await supabase
-                .from('profiles')
-                .select('total_pushes')
-                .eq('id', session.user.id)
-                .single();
-            
-            if (data) {
-                setCareerPushes(data.total_pushes || 0);
-            } else {
-                if (error && error.code === 'PGRST116') {
-                    await supabase.from('profiles').insert({
-                        id: session.user.id,
-                        full_name: displayName,
-                        total_pushes: 0
-                    });
-                }
-            }
+            const { data, error } = await supabase.from('profiles').select('total_pushes').eq('id', session.user.id).single();
+            if (data) setCareerPushes(data.total_pushes || 0);
+            else if (error && error.code === 'PGRST116') await supabase.from('profiles').insert({ id: session.user.id, full_name: displayName, total_pushes: 0 });
         }
         setLoadingProfile(false);
     };
@@ -148,6 +177,10 @@ const PushBattles: React.FC = () => {
 
     const savedHigh = localStorage.getItem('pushBattlesHigh');
     if (savedHigh) setHighScore(parseInt(savedHigh));
+
+    // Load Pro Aim setting
+    const savedProAim = localStorage.getItem('pushBattlesProAim');
+    if (savedProAim === 'true') setProAim(true);
 
     return () => {
       if (channelRef.current) supabase.removeChannel(channelRef.current);
@@ -158,12 +191,7 @@ const PushBattles: React.FC = () => {
       if (!user) return;
       const newTotal = careerPushes + sessionPushes;
       setCareerPushes(newTotal);
-
-      await supabase.from('profiles').upsert({
-          id: user.id,
-          total_pushes: newTotal,
-          updated_at: new Date()
-      });
+      await supabase.from('profiles').upsert({ id: user.id, total_pushes: newTotal, updated_at: new Date() });
   };
 
   const showNotification = (msg: string) => {
@@ -178,11 +206,20 @@ const PushBattles: React.FC = () => {
       await supabase.from('profiles').update({ total_pushes: val }).eq('id', user.id);
   };
 
+  const handleProAimToggle = () => {
+      const newVal = !proAim;
+      setProAim(newVal);
+      localStorage.setItem('pushBattlesProAim', String(newVal));
+  };
+
   const gameRef = useRef({
     entities: [] as Entity[],
+    traps: [] as Trap[],
     particles: [] as any[],
     camera: { x: 0, y: 0 },
     keys: { up: false, down: false, left: false, right: false, attack: false, skill: false },
+    mouse: { x: 0, y: 0 },
+    settings: { proAim: false },
     animationId: 0,
     width: 0,
     height: 0,
@@ -190,6 +227,11 @@ const PushBattles: React.FC = () => {
     currentScore: 0,
     lastBroadcast: 0
   });
+
+  // Sync state to ref for game loop
+  useEffect(() => {
+      gameRef.current.settings.proAim = proAim;
+  }, [proAim]);
 
   const spawnParticles = (x: number, y: number, color: string, count: number) => {
     for(let i=0; i<count; i++) {
@@ -219,6 +261,18 @@ const PushBattles: React.FC = () => {
        }
   };
 
+  const spawnTrap = (x: number, y: number, type: 'LEGO' | 'MINE', ownerId: string, color: string) => {
+      gameRef.current.traps.push({
+          id: Math.random().toString(36),
+          x, y, 
+          radius: type === 'LEGO' ? 15 : 20,
+          type,
+          ownerId,
+          color,
+          active: true
+      });
+  };
+
   const initGame = async () => {
     const ents: Entity[] = [];
     const abilityConfig = ABILITIES[selectedAbility];
@@ -235,15 +289,20 @@ const PushBattles: React.FC = () => {
       isPlayer: true,
       isAdmin: isAdmin,
       ability: selectedAbility,
-      moveSpeed: 0.30,
+      moveSpeed: abilityConfig.name === 'Colosso' ? 0.22 : 0.30, 
+      mass: abilityConfig.name === 'Colosso' ? 2.5 : 1.0,
+      invisible: false,
+      invulnerable: false,
       isAttacking: false,
       attackTimer: 0,
       hitList: [],
       lastAttackerId: null,
       attackCooldown: 0,
       skillCooldown: 0,
-      maxSkillCooldown: abilityConfig.cooldown,
+      maxSkillCooldown: abilityConfig.cooldown || 0,
       maxAttackCooldown: 40,
+      passiveTimer: abilityConfig.passiveCooldown || 0,
+      maxPassiveTimer: abilityConfig.passiveCooldown || 0,
       dead: false,
       facing: 0,
       stunTimer: 0,
@@ -259,6 +318,7 @@ const PushBattles: React.FC = () => {
     }
 
     gameRef.current.entities = ents;
+    gameRef.current.traps = [];
     gameRef.current.particles = [];
     gameRef.current.currentScore = 0;
     setGameState('PLAYING');
@@ -268,44 +328,33 @@ const PushBattles: React.FC = () => {
       if (channelRef.current) supabase.removeChannel(channelRef.current);
 
       const channel = supabase.channel('push_battles_global', {
-        config: {
-          broadcast: { self: false },
-          presence: { key: myIdRef.current },
-        },
+        config: { broadcast: { self: false }, presence: { key: myIdRef.current } },
       });
 
       channel
-        .on('broadcast', { event: 'player_update' }, ({ payload }) => {
-           handleRemoteUpdate(payload);
+        .on('broadcast', { event: 'player_update' }, ({ payload }) => handleRemoteUpdate(payload))
+        .on('broadcast', { event: 'player_attack' }, ({ payload }) => handleRemoteAttack(payload))
+        .on('broadcast', { event: 'ability_trigger' }, ({ payload }) => {
+            if (payload.type === 'LEGO') spawnTrap(payload.x, payload.y, 'LEGO', payload.id, payload.color);
         })
-        .on('broadcast', { event: 'player_attack' }, ({ payload }) => {
-           handleRemoteAttack(payload);
-        })
-        .on('broadcast', { event: 'player_hit' }, ({ payload }) => {
-           handleRemoteHit(payload);
-        })
+        .on('broadcast', { event: 'player_hit' }, ({ payload }) => handleRemoteHit(payload))
+        .on('broadcast', { event: 'player_teleport' }, ({ payload }) => handleRemoteTeleport(payload))
         .on('broadcast', { event: 'player_killed' }, ({ payload }) => {
-            // Check if I was the killer
             if (payload.killedBy === myIdRef.current) {
                 gameRef.current.currentScore += 5;
                 showNotification(`VOCÊ DERRUBOU ${payload.victimName}! +5 PTS`);
-                spawnParticles(gameRef.current.width/2, gameRef.current.height/2, '#fbbf24', 50); // Celebration confetti
+                spawnParticles(gameRef.current.width/2, gameRef.current.height/2, '#fbbf24', 50);
             }
         })
         .on('presence', { event: 'sync' }, () => {
            const state = channel.presenceState();
            const presenceIds = Object.keys(state);
            setOnlineCount(presenceIds.length);
-           
-           // CLEANUP: Remove players who left presence
            gameRef.current.entities = gameRef.current.entities.filter(e => {
-               if (e.isPlayer) return true; // Keep self
-               if (!e.isRemote) return true; // Keep local bots (if any)
-               
+               if (e.isPlayer) return true;
+               if (!e.isRemote) return true;
                const stillOnline = presenceIds.includes(e.id);
-               if (!stillOnline) {
-                   spawnParticles(e.x, e.y, e.color, 10); // Poof effect
-               }
+               if (!stillOnline) spawnParticles(e.x, e.y, e.color, 10);
                return stillOnline;
            });
         })
@@ -324,59 +373,45 @@ const PushBattles: React.FC = () => {
       const existing = ref.entities.find(e => e.id === data.id);
       
       if (existing) {
-          // Smooth Interpolation
           const dist = Math.sqrt((data.x - existing.x)**2 + (data.y - existing.y)**2);
           if (dist > 150) {
-              // Teleport if too far (likely lag spike or respawn)
               existing.x = data.x;
               existing.y = data.y;
           } else {
-              // Interpolate
               existing.x += (data.x - existing.x) * 0.25;
               existing.y += (data.y - existing.y) * 0.25;
           }
-          
           existing.vx = data.vx || 0;
           existing.vy = data.vy || 0;
           existing.facing = data.facing;
           existing.ability = data.ability;
+          existing.invisible = data.invisible || false;
+          existing.invulnerable = data.invulnerable || false;
+          existing.hookTarget = data.hookTarget;
           
-          if (data.stunned) {
-               existing.stunTimer = Math.max(existing.stunTimer, 5);
-          }
-
-          if (data.dead && !existing.dead) {
-              spawnParticles(existing.x, existing.y, existing.color, 20); // Death explosion
-          }
+          if (data.stunned) existing.stunTimer = Math.max(existing.stunTimer, 5);
+          if (data.dead && !existing.dead) spawnParticles(existing.x, existing.y, existing.color, 20);
           existing.dead = data.dead;
       } else if (!data.dead) {
           const config = ABILITIES[data.ability] || ABILITIES.IMPACT;
           ref.entities.push({
-              id: data.id,
-              name: data.name || "Unknown",
-              x: data.x,
-              y: data.y,
-              vx: 0, vy: 0,
-              radius: PLAYER_RADIUS,
-              color: config.color,
-              isPlayer: false,
-              isAdmin: data.isAdmin,
-              isRemote: true,
-              ability: data.ability,
-              moveSpeed: 0,
-              isAttacking: false,
-              attackTimer: 0,
-              hitList: [],
-              lastAttackerId: null,
-              attackCooldown: 0,
-              skillCooldown: 0,
-              maxSkillCooldown: 0,
-              maxAttackCooldown: 40,
-              dead: false,
-              facing: data.facing,
-              stunTimer: 0,
-              skillAnim: 0
+              id: data.id, name: data.name || "Unknown", x: data.x, y: data.y, vx: 0, vy: 0,
+              radius: PLAYER_RADIUS, color: config.color, isPlayer: false, isAdmin: data.isAdmin,
+              isRemote: true, ability: data.ability, moveSpeed: 0, mass: 1, invisible: false,
+              invulnerable: false, isAttacking: false, attackTimer: 0, hitList: [], lastAttackerId: null,
+              attackCooldown: 0, skillCooldown: 0, maxSkillCooldown: 0, maxAttackCooldown: 40,
+              passiveTimer: 0, maxPassiveTimer: 0, dead: false, facing: data.facing, stunTimer: 0, skillAnim: 0
           });
+      }
+  };
+
+  const handleRemoteTeleport = (payload: any) => {
+      const ent = gameRef.current.entities.find(e => e.id === payload.id);
+      if (ent) {
+          spawnParticles(ent.x, ent.y, ent.color, 15);
+          ent.x = payload.x;
+          ent.y = payload.y;
+          spawnParticles(ent.x, ent.y, ent.color, 15);
       }
   };
 
@@ -389,7 +424,8 @@ const PushBattles: React.FC = () => {
           } else if (data.type === 'SKILL') {
               ent.skillAnim = 15;
               const config = ABILITIES[ent.ability] || ABILITIES.IMPACT;
-              spawnShockwave(ent.x, ent.y, config.range, config.color, 10);
+              if (ent.ability === 'FLASH') spawnParticles(ent.x, ent.y, config.color, 15);
+              else spawnShockwave(ent.x, ent.y, config.range || 100, config.color, 10);
           }
       }
   };
@@ -397,10 +433,17 @@ const PushBattles: React.FC = () => {
   const handleRemoteHit = (payload: any) => {
       const me = getPlayer();
       if (me && me.id === payload.targetId && !me.dead) {
-          me.vx += Math.cos(payload.angle) * payload.force;
-          me.vy += Math.sin(payload.angle) * payload.force;
+          if (me.invulnerable) return; // Repulsor shield
+
+          const resistance = me.mass || 1.0;
+          const finalForce = payload.force / resistance;
+          
+          me.vx += Math.cos(payload.angle) * finalForce;
+          me.vy += Math.sin(payload.angle) * finalForce;
           me.stunTimer = payload.stun;
-          me.lastAttackerId = payload.attackerId; // Record who hit me
+          me.lastAttackerId = payload.attackerId; 
+          
+          if (me.invisible) me.invisible = false;
           spawnParticles(me.x, me.y, me.color, 10);
       }
   };
@@ -408,34 +451,18 @@ const PushBattles: React.FC = () => {
   const createBot = (index: number): Entity => {
      const angle = (Math.PI * 2 / 4) * index;
      const dist = 300;
-     const simpleAbilities = ['IMPACT', 'DASH', 'QUAKE'];
-     const randomAbility = simpleAbilities[Math.floor(Math.random() * simpleAbilities.length)];
+     const botAbilities = ['IMPACT', 'DASH', 'LEGO', 'HOOK', 'SWAP', 'REPULSOR'];
+     const randomAbility = botAbilities[Math.floor(Math.random() * botAbilities.length)];
      const config = ABILITIES[randomAbility];
 
      return {
-         id: `bot-${Math.random()}`,
-         name: BOT_NAMES[index] || `Bot ${index}`,
-         x: Math.cos(angle) * dist,
-         y: Math.sin(angle) * dist,
-         vx: 0, vy: 0,
-         radius: PLAYER_RADIUS,
-         color: config.color, 
-         isPlayer: false,
-         isAdmin: false,
-         ability: randomAbility,
-         moveSpeed: 0.25,
-         isAttacking: false,
-         attackTimer: 0,
-         hitList: [],
-         lastAttackerId: null,
-         attackCooldown: 0,
-         skillCooldown: 0,
-         maxSkillCooldown: config.cooldown,
-         maxAttackCooldown: 40,
-         dead: false,
-         facing: angle + Math.PI, 
-         stunTimer: 0,
-         skillAnim: 0
+         id: `bot-${Math.random()}`, name: BOT_NAMES[index] || `Bot ${index}`, x: Math.cos(angle) * dist, y: Math.sin(angle) * dist,
+         vx: 0, vy: 0, radius: PLAYER_RADIUS, color: config.color, isPlayer: false, isAdmin: false,
+         ability: randomAbility, moveSpeed: randomAbility === 'MASS' ? 0.22 : 0.25, mass: randomAbility === 'MASS' ? 2.5 : 1.0,
+         invisible: false, invulnerable: false, isAttacking: false, attackTimer: 0, hitList: [], lastAttackerId: null,
+         attackCooldown: 0, skillCooldown: 0, maxSkillCooldown: config.cooldown, maxAttackCooldown: 40,
+         passiveTimer: config.passiveCooldown || 0, maxPassiveTimer: config.passiveCooldown || 0, dead: false,
+         facing: angle + Math.PI, stunTimer: 0, skillAnim: 0
      };
   };
 
@@ -474,33 +501,31 @@ const PushBattles: React.FC = () => {
         if (e.code === 'KeyE') k.skill = false;
     };
 
+    const handleMouseMove = (e: MouseEvent) => {
+        const rect = canvas.getBoundingClientRect();
+        gameRef.current.mouse.x = e.clientX - rect.left;
+        gameRef.current.mouse.y = e.clientY - rect.top;
+    };
+
     const getTouchPos = (touch: React.Touch | Touch) => {
         const rect = canvas.getBoundingClientRect();
-        return {
-            x: touch.clientX - rect.left,
-            y: touch.clientY - rect.top
-        };
+        return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
     };
 
     const handleTouchStart = (e: TouchEvent) => {
        e.preventDefault(); 
        const w = gameRef.current.width;
        const h = gameRef.current.height;
-       
        for (let i = 0; i < e.changedTouches.length; i++) {
            const touch = e.changedTouches[i];
            const pos = getTouchPos(touch);
-
            if (pos.x < w / 2) {
                gameRef.current.joystick.active = true;
                gameRef.current.joystick.x = pos.x;
                gameRef.current.joystick.y = pos.y;
            } else {
-               if (pos.y < h - 150 && pos.x > w - 150) {
-                   gameRef.current.keys.skill = true;
-               } else {
-                   gameRef.current.keys.attack = true;
-               }
+               if (pos.y < h - 150 && pos.x > w - 150) gameRef.current.keys.skill = true;
+               else gameRef.current.keys.attack = true;
            }
        }
     };
@@ -515,8 +540,7 @@ const PushBattles: React.FC = () => {
                  const dx = pos.x - gameRef.current.joystick.x;
                  const dy = pos.y - gameRef.current.joystick.y;
                  const dist = Math.sqrt(dx*dx + dy*dy);
-                 const maxDist = 50;
-                 const clampedDist = Math.min(dist, maxDist);
+                 const clampedDist = Math.min(dist, 50);
                  const angle = Math.atan2(dy, dx);
                  gameRef.current.joystick.dx = Math.cos(angle) * clampedDist;
                  gameRef.current.joystick.dy = Math.sin(angle) * clampedDist;
@@ -543,48 +567,50 @@ const PushBattles: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
 
-    // --- GAME LOGIC FUNCTIONS ---
+    // --- GAME LOGIC ---
     
+    const applyForce = (target: Entity, sourceId: string, angle: number, force: number, stun: number) => {
+        if (target.id === sourceId || target.dead || target.invisible || target.invulnerable) return;
+        
+        const resistance = target.mass || 1.0;
+        const finalForce = force / resistance;
+
+        if (!target.isRemote) {
+            target.vx += Math.cos(angle) * finalForce;
+            target.vy += Math.sin(angle) * finalForce;
+            target.stunTimer = stun;
+            target.lastAttackerId = sourceId;
+            if (target.invisible) target.invisible = false;
+        } else if (gameMode === 'ONLINE' && channelRef.current) {
+             channelRef.current.send({
+                 type: 'broadcast',
+                 event: 'player_hit',
+                 payload: { targetId: target.id, attackerId: sourceId, force: force, angle: angle, stun: stun }
+             });
+        }
+        spawnParticles(target.x, target.y, target.color, 5);
+    };
+
     const applyAreaEffect = (source: Entity, range: number, force: number, stun: number, directional: boolean = false) => {
         gameRef.current.entities.forEach(target => {
-            if (target.id === source.id || target.dead) return;
+            if (target.id === source.id) return;
             const dx = target.x - source.x;
             const dy = target.y - source.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
-            
             if (dist < range + target.radius) {
                 const angle = Math.atan2(dy, dx);
-                
                 if (directional) {
                     let angleDiff = angle - source.facing;
                     while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
                     while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
                     if (Math.abs(angleDiff) > Math.PI / 3) return; 
                 }
-
-                if (!target.isRemote) {
-                    target.vx += Math.cos(angle) * force;
-                    target.vy += Math.sin(angle) * force;
-                    target.stunTimer = stun;
-                    target.lastAttackerId = source.id; // Track attacker
-                } else if (gameMode === 'ONLINE' && channelRef.current) {
-                     channelRef.current.send({
-                         type: 'broadcast',
-                         event: 'player_hit',
-                         payload: {
-                             targetId: target.id,
-                             attackerId: source.id,
-                             force: force,
-                             angle: angle,
-                             stun: stun
-                         }
-                     });
-                }
-                spawnParticles(target.x, target.y, target.color, 5);
+                applyForce(target, source.id, angle, force, stun);
             }
         });
     };
@@ -594,77 +620,115 @@ const PushBattles: React.FC = () => {
         ent.attackTimer = ATTACK_DURATION;
         ent.hitList = [];
         ent.attackCooldown = ent.maxAttackCooldown;
+        ent.invisible = false; 
     };
 
     const useActiveSkill = (ent: Entity) => {
         const config = ABILITIES[ent.ability];
+        if (config.type !== 'ACTIVE') return;
+
         ent.skillCooldown = ent.maxSkillCooldown;
         ent.skillAnim = 15;
+        ent.invisible = false;
 
-        // --- SKILL LOGIC ---
-        // MOVEMENT
-        if (ent.ability === 'DASH' || ent.ability === 'BERSERK') {
-            const f = config.force * 0.5; // Dash speed
+        // --- SKILL IMPLEMENTATIONS ---
+        
+        if (ent.ability === 'DASH') {
+            const f = config.force * 0.5;
             ent.vx += Math.cos(ent.facing) * f;
             ent.vy += Math.sin(ent.facing) * f;
             spawnParticles(ent.x, ent.y, config.color, 10);
-            if (ent.ability === 'BERSERK') applyAreaEffect(ent, 100, config.force, config.stun, false);
+            applyAreaEffect(ent, 80, 20, 30, false);
         }
-        else if (ent.ability === 'BLINK' || ent.ability === 'DEV_SPEED') {
+        else if (ent.ability === 'FLASH') {
             ent.x += Math.cos(ent.facing) * config.range;
             ent.y += Math.sin(ent.facing) * config.range;
             spawnParticles(ent.x, ent.y, config.color, 20);
         }
-        // AOE (CENTERED)
-        else if (['QUAKE', 'VORTEX', 'EXPLOSION', 'GRAVITY', 'SHOCKWAVE', 'DEV_NOVA', 'DEV_BLACKHOLE', 'DEV_FREEZE', 'DEV_NUKE'].includes(ent.ability)) {
+        else if (ent.ability === 'GHOST') {
+            ent.invisible = true;
+            spawnParticles(ent.x, ent.y, '#ffffff', 15);
+        }
+        else if (ent.ability === 'REPULSOR') {
+            ent.invulnerable = true;
+            // Invulnerability lasts for 2s, handled in update loop by skillCooldown check
+            spawnShockwave(ent.x, ent.y, 60, config.color, 12);
+        }
+        else if (ent.ability === 'IMPACT' || ent.ability === 'DEV_NOVA') {
             spawnShockwave(ent.x, ent.y, config.range, config.color, 15);
             applyAreaEffect(ent, config.range, config.force, config.stun, false);
         }
-        // DIRECTIONAL / CONE
-        else if (['IMPACT', 'SHIELD', 'SHOTGUN', 'SUMO'].includes(ent.ability)) {
-            spawnShockwave(ent.x, ent.y, config.range, config.color, 8);
-            applyAreaEffect(ent, config.range, config.force, config.stun, true);
+        else if (ent.ability === 'HOOK') {
+             // Find nearest target in cone
+             let target = null;
+             let minDist = config.range;
+             gameRef.current.entities.forEach(other => {
+                 if (other.id === ent.id || other.dead || other.invisible) return;
+                 const dx = other.x - ent.x;
+                 const dy = other.y - ent.y;
+                 const dist = Math.sqrt(dx*dx + dy*dy);
+                 if (dist < minDist) {
+                     const angle = Math.atan2(dy, dx);
+                     let diff = angle - ent.facing;
+                     while (diff > Math.PI) diff -= Math.PI * 2;
+                     while (diff < -Math.PI) diff += Math.PI * 2;
+                     if (Math.abs(diff) < 0.5) { // Cone check
+                         minDist = dist;
+                         target = other;
+                     }
+                 }
+             });
+
+             if (target) {
+                 ent.hookTarget = { x: target.x, y: target.y };
+                 // Pull target towards me
+                 const pullAngle = Math.atan2(ent.y - target.y, ent.x - target.x);
+                 applyForce(target, ent.id, pullAngle, 40, 60); // Strong pull
+             } else {
+                 // Miss visual
+                 ent.hookTarget = { x: ent.x + Math.cos(ent.facing)*config.range, y: ent.y + Math.sin(ent.facing)*config.range };
+             }
         }
-        // RANGED / SPECIAL
-        else if (ent.ability === 'SNIPER' || ent.ability === 'FROST' || ent.ability === 'PHANTOM') {
-             // Raycast logic
-            const endX = ent.x + Math.cos(ent.facing) * config.range;
-            const endY = ent.y + Math.sin(ent.facing) * config.range;
-            
-            gameRef.current.entities.forEach(target => {
-                if (target.id === ent.id || target.dead) return;
-                const dx = target.x - ent.x;
-                const dy = target.y - ent.y;
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                if (dist < config.range && dist > 0) {
-                    const angleToTarget = Math.atan2(dy, dx);
-                    let angleDiff = angleToTarget - ent.facing;
-                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-                    
-                    if (Math.abs(angleDiff) < 0.25) { 
-                        if (!target.isRemote) {
-                            target.vx += Math.cos(ent.facing) * config.force;
-                            target.vy += Math.sin(ent.facing) * config.force;
-                            target.stunTimer = config.stun;
-                            target.lastAttackerId = ent.id;
-                        } else if (gameMode === 'ONLINE' && channelRef.current) {
-                             channelRef.current.send({
-                                 type: 'broadcast',
-                                 event: 'player_hit',
-                                 payload: {
-                                     targetId: target.id,
-                                     attackerId: ent.id,
-                                     force: config.force,
-                                     angle: ent.facing,
-                                     stun: config.stun
-                                 }
-                             });
-                        }
-                        spawnParticles(target.x, target.y, target.color, 8);
-                    }
-                }
+        else if (ent.ability === 'SWAP') {
+            // Find nearest enemy
+            let target = null;
+            let minDist = config.range;
+            gameRef.current.entities.forEach(other => {
+                 if (other.id === ent.id || other.dead) return;
+                 const dist = Math.sqrt((other.x - ent.x)**2 + (other.y - ent.y)**2);
+                 if (dist < minDist) { minDist = dist; target = other; }
             });
+
+            if (target) {
+                // Swap coords
+                const tempX = ent.x; const tempY = ent.y;
+                ent.x = target.x; ent.y = target.y;
+                
+                if (!target.isRemote) {
+                    target.x = tempX; target.y = tempY;
+                    target.stunTimer = 30; // Confused
+                } else if (gameMode === 'ONLINE' && channelRef.current) {
+                    // Force update remote position locally (visual) and send packet
+                    channelRef.current.send({
+                         type: 'broadcast',
+                         event: 'player_teleport',
+                         payload: { id: target.id, x: tempX, y: tempY }
+                    });
+                }
+                
+                spawnParticles(ent.x, ent.y, config.color, 20);
+                spawnParticles(tempX, tempY, config.color, 20);
+            }
+        }
+    };
+
+    const triggerPassive = (ent: Entity) => {
+        const config = ABILITIES[ent.ability];
+        if (ent.ability === 'LEGO') {
+            spawnTrap(ent.x, ent.y, 'LEGO', ent.id, config.color);
+            if (gameMode === 'ONLINE' && channelRef.current && ent.isPlayer) {
+                 channelRef.current.send({ type: 'broadcast', event: 'ability_trigger', payload: { type: 'LEGO', x: ent.x, y: ent.y, id: ent.id, color: config.color } });
+            }
         }
     };
 
@@ -690,17 +754,10 @@ const PushBattles: React.FC = () => {
                     type: 'broadcast',
                     event: 'player_update',
                     payload: {
-                        id: player.id,
-                        name: player.name, 
-                        isAdmin: player.isAdmin,
-                        x: player.x,
-                        y: player.y,
-                        vx: player.vx,
-                        vy: player.vy,
-                        facing: player.facing,
-                        ability: player.ability,
-                        dead: player.dead,
-                        stunned: player.stunTimer > 0
+                        id: player.id, name: player.name, isAdmin: player.isAdmin, x: player.x, y: player.y,
+                        vx: player.vx, vy: player.vy, facing: player.facing, ability: player.ability,
+                        dead: player.dead, stunned: player.stunTimer > 0, invisible: player.invisible,
+                        invulnerable: player.invulnerable, hookTarget: player.hookTarget
                     }
                 });
                 ref.lastBroadcast = now;
@@ -710,192 +767,147 @@ const PushBattles: React.FC = () => {
         ref.entities.forEach(e => {
             if (e.dead) return;
 
-            // Universal Timer Logic (Fixed Infinite Hitbox)
             if (e.attackCooldown > 0) e.attackCooldown--;
             if (e.skillCooldown > 0) e.skillCooldown--;
             if (e.skillAnim > 0) e.skillAnim--;
+            else e.hookTarget = undefined; // Clear visual hook
+
+            // Special statuses expiration
+            if (e.invisible && e.skillCooldown <= e.maxSkillCooldown - 120) e.invisible = false;
+            if (e.invulnerable && e.skillCooldown <= e.maxSkillCooldown - 120) e.invulnerable = false;
+
+            if (!e.isRemote && e.maxPassiveTimer > 0) {
+                e.passiveTimer--;
+                if (e.passiveTimer <= 0) {
+                    triggerPassive(e);
+                    e.passiveTimer = e.maxPassiveTimer;
+                }
+            }
+            
+            if (!e.isRemote && e.ability === 'SPIKES' && !e.invisible) applyAreaEffect(e, 40, 15, 10, false);
+
             if (e.isAttacking) {
                 e.attackTimer--;
                 if (e.attackTimer <= 0) e.isAttacking = false;
             }
             if (e.stunTimer > 0) e.stunTimer--;
 
-            // Remote Movement Interpolation
             if (e.isRemote) {
                 if (Math.abs(e.vx) > 0.01) e.x += e.vx;
                 if (Math.abs(e.vy) > 0.01) e.y += e.vy;
-                e.vx *= FRICTION;
-                e.vy *= FRICTION;
-                return; // Skip local physics for remotes
-            }
-
-            // --- LOCAL ENTITY LOGIC ---
-
-            if (e.isAttacking) {
-                ref.entities.forEach(target => {
-                    if (target.id === e.id || target.dead || e.hitList.includes(target.id)) return;
-                    
-                    const dx = target.x - e.x;
-                    const dy = target.y - e.y;
-                    const dist = Math.sqrt(dx*dx + dy*dy);
-                    
-                    if (dist < ATTACK_RADIUS + target.radius) {
-                        e.hitList.push(target.id);
-                        const angle = Math.atan2(dy, dx);
-                        
-                        if (!target.isRemote) {
-                             target.vx += Math.cos(angle) * PUSH_FORCE;
-                             target.vy += Math.sin(angle) * PUSH_FORCE;
-                             target.stunTimer = 45;
-                             target.lastAttackerId = e.id;
-                        } else if (gameMode === 'ONLINE' && channelRef.current) {
-                             channelRef.current.send({
-                                 type: 'broadcast',
-                                 event: 'player_hit',
-                                 payload: {
-                                     targetId: target.id,
-                                     attackerId: e.id,
-                                     force: PUSH_FORCE,
-                                     angle: angle,
-                                     stun: 45
-                                 }
-                             });
-                        }
-                        
-                        spawnParticles(target.x, target.y, target.color, 5);
-                        
-                        if (e.isPlayer && !target.isRemote) { // Local bot kill check immediate
-                             // Score handling is done on death check
-                        }
-                    }
+                e.vx *= FRICTION; e.vy *= FRICTION;
+            } else {
+                ref.traps.forEach((trap, tIdx) => {
+                     if (!trap.active || trap.ownerId === e.id) return;
+                     const dx = e.x - trap.x; const dy = e.y - trap.y;
+                     const dist = Math.sqrt(dx*dx + dy*dy);
+                     if (dist < e.radius + trap.radius) {
+                         trap.active = false;
+                         spawnParticles(trap.x, trap.y, trap.color, 10);
+                         if (trap.type === 'LEGO') {
+                             e.stunTimer = 180;
+                             applyForce(e, trap.ownerId, Math.atan2(dy, dx), 10, 180);
+                         }
+                     }
                 });
-            }
 
-            if (e.stunTimer <= 0) {
-                if (Math.abs(e.vx) > 0.05 || Math.abs(e.vy) > 0.05) {
-                    if (e.isPlayer) {
-                        e.facing = Math.atan2(e.vy, e.vx);
-                    }
-                }
-
-                if (e.isPlayer) {
-                    const speed = e.moveSpeed;
-                    if (ref.keys.up) e.vy -= speed;
-                    if (ref.keys.down) e.vy += speed;
-                    if (ref.keys.left) e.vx -= speed;
-                    if (ref.keys.right) e.vx += speed;
-                    
-                    if (ref.joystick.active) {
-                        e.vx += (ref.joystick.dx / 50) * speed;
-                        e.vy += (ref.joystick.dy / 50) * speed;
-                    }
-                } else {
-                    // BOT AI
-                    let target = null;
-                    let minDist = 9999;
-                    
-                    ref.entities.forEach(other => {
-                        if (other.id !== e.id && !other.dead) {
-                            const d = Math.sqrt((other.x - e.x)**2 + (other.y - e.y)**2);
-                            if (d < minDist) {
-                                minDist = d;
-                                target = other;
-                            }
+                if (e.isAttacking) {
+                    ref.entities.forEach(target => {
+                        if (target.id === e.id || target.dead || e.hitList.includes(target.id)) return;
+                        const dx = target.x - e.x; const dy = target.y - e.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        if (dist < ATTACK_RADIUS + target.radius) {
+                            e.hitList.push(target.id);
+                            applyForce(target, e.id, Math.atan2(dy, dx), PUSH_FORCE, 45);
                         }
                     });
+                }
 
-                    if (target) {
-                        const targetAngle = Math.atan2(target.y - e.y, target.x - e.x);
-                        let angleDiff = targetAngle - e.facing;
-                        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-                        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-                        
-                        const turnSpeed = 0.1;
-                        if (Math.abs(angleDiff) > turnSpeed) {
-                            e.facing += Math.sign(angleDiff) * turnSpeed;
-                        } else {
-                            e.facing = targetAngle;
-                        }
-
-                        const randomWobble = (Math.random() - 0.5) * 0.5; 
-                        e.vx += Math.cos(e.facing + randomWobble) * (e.moveSpeed * 0.8);
-                        e.vy += Math.sin(e.facing + randomWobble) * (e.moveSpeed * 0.8);
-
-                        if (minDist < 80 && e.attackCooldown <= 0 && !e.isAttacking && Math.random() < 0.05) {
-                            startBasicAttack(e);
-                        }
-                        
-                        if (minDist < (ABILITIES[e.ability]?.range || 100) && e.skillCooldown <= 0 && Math.random() < 0.01) {
-                            useActiveSkill(e);
-                        }
+                if (e.stunTimer <= 0) {
+                    // Orientation Logic
+                    if (e.isPlayer && ref.settings.proAim) {
+                        // Pro Aim (Mouse)
+                        const mx = ref.mouse.x - ref.width/2 + ref.camera.x;
+                        const my = ref.mouse.y - ref.height/2 + ref.camera.y;
+                        e.facing = Math.atan2(my - e.y, mx - e.x);
+                    } else if (Math.abs(e.vx) > 0.05 || Math.abs(e.vy) > 0.05) {
+                        // Movement Direction
+                        if (e.isPlayer) e.facing = Math.atan2(e.vy, e.vx);
                     }
-                    
-                    // Stay in arena
-                    const distFromCenter = Math.sqrt(e.x*e.x + e.y*e.y);
-                    if (distFromCenter > ARENA_RADIUS * 0.9) {
-                        const angle = Math.atan2(0 - e.y, 0 - e.x);
-                        e.vx += Math.cos(angle) * 0.5;
-                        e.vy += Math.sin(angle) * 0.5;
+
+                    if (e.isPlayer) {
+                        const speed = e.moveSpeed;
+                        if (ref.keys.up) e.vy -= speed;
+                        if (ref.keys.down) e.vy += speed;
+                        if (ref.keys.left) e.vx -= speed;
+                        if (ref.keys.right) e.vx += speed;
+                        if (ref.joystick.active) {
+                            e.vx += (ref.joystick.dx / 50) * speed;
+                            e.vy += (ref.joystick.dy / 50) * speed;
+                        }
+                    } else {
+                        let target = null; let minDist = 9999;
+                        ref.entities.forEach(other => {
+                            if (other.id !== e.id && !other.dead && !other.invisible) {
+                                const d = Math.sqrt((other.x - e.x)**2 + (other.y - e.y)**2);
+                                if (d < minDist) { minDist = d; target = other; }
+                            }
+                        });
+
+                        if (target) {
+                            const targetAngle = Math.atan2(target.y - e.y, target.x - e.x);
+                            let angleDiff = targetAngle - e.facing;
+                            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                            if (Math.abs(angleDiff) > 0.1) e.facing += Math.sign(angleDiff) * 0.1;
+                            else e.facing = targetAngle;
+                            e.vx += Math.cos(e.facing) * e.moveSpeed;
+                            e.vy += Math.sin(e.facing) * e.moveSpeed;
+                            if (minDist < 80 && e.attackCooldown <= 0 && !e.isAttacking && Math.random() < 0.05) startBasicAttack(e);
+                            if (minDist < (ABILITIES[e.ability]?.range || 100) && e.skillCooldown <= 0 && Math.random() < 0.01) useActiveSkill(e);
+                        }
+                        
+                        const distFromCenter = Math.sqrt(e.x*e.x + e.y*e.y);
+                        if (distFromCenter > ARENA_RADIUS * 0.9) {
+                            const angle = Math.atan2(0 - e.y, 0 - e.x);
+                            e.vx += Math.cos(angle) * 0.5; e.vy += Math.sin(angle) * 0.5;
+                        }
                     }
                 }
+                e.x += e.vx; e.y += e.vy; e.vx *= FRICTION; e.vy *= FRICTION;
             }
-
-            e.x += e.vx;
-            e.y += e.vy;
-            e.vx *= FRICTION;
-            e.vy *= FRICTION;
         });
+        
+        ref.traps = ref.traps.filter(t => t.active);
 
-        // INPUT HANDLING
         if (player && !player.dead && player.stunTimer <= 0) {
             if (ref.keys.attack && player.attackCooldown <= 0 && !player.isAttacking) {
                 startBasicAttack(player);
                 if (gameMode === 'ONLINE' && channelRef.current) {
-                    channelRef.current.send({
-                        type: 'broadcast',
-                        event: 'player_attack',
-                        payload: { id: player.id, type: 'BASIC' }
-                    });
+                    channelRef.current.send({ type: 'broadcast', event: 'player_attack', payload: { id: player.id, type: 'BASIC' } });
                 }
             }
             if (ref.keys.skill && player.skillCooldown <= 0) {
                 useActiveSkill(player);
                 if (gameMode === 'ONLINE' && channelRef.current) {
-                    channelRef.current.send({
-                        type: 'broadcast',
-                        event: 'player_attack',
-                        payload: { id: player.id, type: 'SKILL' }
-                    });
+                    channelRef.current.send({ type: 'broadcast', event: 'player_attack', payload: { id: player.id, type: 'SKILL' } });
                 }
             }
         }
 
-        // DEATH CHECK
         ref.entities.forEach(e => {
             if (e.dead) return;
             const dist = Math.sqrt(e.x*e.x + e.y*e.y);
-            
             if (dist > ARENA_RADIUS + e.radius) {
                 e.dead = true;
                 spawnParticles(e.x, e.y, e.color, 20);
-                
-                // If I died
                 if (e.isPlayer) {
-                    // Send kill credit if online
                     if (gameMode === 'ONLINE' && channelRef.current && e.lastAttackerId) {
-                         channelRef.current.send({
-                             type: 'broadcast',
-                             event: 'player_killed',
-                             payload: { killedBy: e.lastAttackerId, victimName: e.name }
-                         });
+                         channelRef.current.send({ type: 'broadcast', event: 'player_killed', payload: { killedBy: e.lastAttackerId, victimName: e.name } });
                     }
-
                     saveProgress(ref.currentScore);
                     setTimeout(() => setGameState('GAMEOVER'), 1000);
-                } 
-                // If Bot died locally
-                else if (!e.isRemote) {
-                    // Give me score if I killed it
+                } else if (!e.isRemote) {
                     if (e.lastAttackerId === myIdRef.current) {
                         ref.currentScore += 1;
                         if (ref.currentScore > highScore) {
@@ -903,7 +915,6 @@ const PushBattles: React.FC = () => {
                             localStorage.setItem('pushBattlesHigh', ref.currentScore.toString());
                         }
                     }
-
                     setTimeout(() => {
                          const newBot = createBot(Math.floor(Math.random()*4));
                          const idx = ref.entities.findIndex(ent => ent.id === e.id);
@@ -913,11 +924,7 @@ const PushBattles: React.FC = () => {
             }
         });
 
-        ref.particles.forEach(p => {
-            p.x += p.vx;
-            p.y += p.vy;
-            p.life -= 0.03;
-        });
+        ref.particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.life -= 0.03; });
         ref.particles = ref.particles.filter(p => p.life > 0);
 
         if (player && !player.dead) {
@@ -931,180 +938,121 @@ const PushBattles: React.FC = () => {
         const { width, height, camera } = ref;
         
         ctx.clearRect(0, 0, width, height);
-        
         ctx.save();
         ctx.translate(width / 2 - camera.x, height / 2 - camera.y);
 
-        // Arena Background
-        ctx.fillStyle = '#cbd5e1'; 
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 1;
-        ctx.globalAlpha = 0.2;
-        const gridSize = 100;
-        const startX = Math.floor((camera.x - width/2) / gridSize) * gridSize;
-        const startY = Math.floor((camera.y - height/2) / gridSize) * gridSize;
-        
-        for (let x = startX; x < startX + width + gridSize; x+=gridSize) {
-             for (let y = startY; y < startY + height + gridSize; y+=gridSize) {
-                  ctx.beginPath(); 
-                  ctx.arc(x, y, 2, 0, Math.PI*2);
-                  ctx.fill();
-             }
-        }
-        ctx.globalAlpha = 1.0;
-
-        ctx.beginPath();
-        ctx.arc(0, 0, ARENA_RADIUS, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
-        ctx.lineWidth = 5;
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.stroke();
-
-        ctx.save();
-        ctx.clip();
-        ctx.strokeStyle = '#f1f5f9';
-        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, ARENA_RADIUS, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = '#e2e8f0'; ctx.stroke();
+        ctx.save(); ctx.clip(); ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 2;
         for(let i = -ARENA_RADIUS; i < ARENA_RADIUS; i+=80) {
             ctx.beginPath(); ctx.moveTo(i, -ARENA_RADIUS); ctx.lineTo(i, ARENA_RADIUS); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(-ARENA_RADIUS, i); ctx.lineTo(ARENA_RADIUS, i); ctx.stroke();
         }
         ctx.restore();
 
+        ref.traps.forEach(t => {
+            ctx.fillStyle = t.color;
+            if (t.type === 'LEGO') {
+                ctx.fillRect(t.x - 8, t.y - 8, 16, 16);
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.fillRect(t.x - 8, t.y - 8, 4, 4); ctx.fillRect(t.x + 4, t.y - 8, 4, 4); ctx.fillRect(t.x - 8, t.y + 4, 4, 4); ctx.fillRect(t.x + 4, t.y + 4, 4, 4);
+            }
+        });
+
         ref.entities.forEach(e => {
             if (e.dead) return;
             
-            ctx.save();
-            ctx.translate(e.x, e.y);
+            // Draw Hook Visual
+            if (e.hookTarget) {
+                ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.hookTarget.x, e.hookTarget.y);
+                ctx.strokeStyle = '#d97706'; ctx.lineWidth = 4; ctx.stroke();
+                ctx.beginPath(); ctx.arc(e.hookTarget.x, e.hookTarget.y, 5, 0, Math.PI*2); ctx.fillStyle = '#d97706'; ctx.fill();
+            }
+
+            ctx.save(); ctx.translate(e.x, e.y);
             
+            if (e.invisible) {
+                if (e.isPlayer) ctx.globalAlpha = 0.5; else { ctx.restore(); return; }
+            }
+
             if (e.isAttacking) {
-                ctx.beginPath();
-                ctx.arc(0, 0, ATTACK_RADIUS + 5, 0, Math.PI * 2); 
-                ctx.fillStyle = 'rgba(239, 68, 68, 0.2)'; 
-                ctx.fill();
-                ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
-                ctx.lineWidth = 1;
-                ctx.stroke();
+                ctx.beginPath(); ctx.arc(0, 0, ATTACK_RADIUS + 5, 0, Math.PI * 2); 
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.2)'; ctx.fill();
+                ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; ctx.lineWidth = 1; ctx.stroke();
             }
 
-            if (e.skillAnim > 0) {
-                const progress = 1 - (e.skillAnim / 15);
-                const maxRange = ABILITIES[e.ability]?.range || 100;
-                ctx.beginPath(); ctx.arc(0, 0, maxRange * progress, 0, Math.PI*2); ctx.fillStyle = e.color + '66'; ctx.fill();
+            if (e.invulnerable) {
+                ctx.beginPath(); ctx.arc(0, 0, e.radius + 10, 0, Math.PI*2);
+                ctx.strokeStyle = '#10b981'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.2)'; ctx.fill();
             }
-            
-            // Name Tag & Admin Title
-            ctx.save();
-            ctx.fillStyle = e.isAdmin ? '#fbbf24' : '#64748b'; // Gold for Admin, Slate for others
-            if (e.isAdmin) ctx.shadowBlur = 5;
-            if (e.isAdmin) ctx.shadowColor = '#fbbf24';
-            
-            ctx.font = e.isAdmin ? 'bold 12px monospace' : 'bold 11px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(e.name.toUpperCase(), 0, -e.radius - 12);
-            ctx.restore();
 
-            // Body
+            ctx.save(); ctx.fillStyle = e.isAdmin ? '#fbbf24' : '#64748b'; 
+            ctx.font = e.isAdmin ? 'bold 12px monospace' : 'bold 11px monospace'; ctx.textAlign = 'center'; ctx.fillText(e.name.toUpperCase(), 0, -e.radius - 12); ctx.restore();
+
             ctx.fillStyle = e.stunTimer > 0 ? '#94a3b8' : e.color; 
-            
-            // Admin Glow
-            if (e.isAdmin) {
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = e.color;
+            if (e.ability === 'SPIKES') {
+                for(let i=0; i<8; i++) {
+                    const a = (Math.PI*2/8)*i;
+                    ctx.beginPath(); ctx.moveTo(Math.cos(a)*e.radius, Math.sin(a)*e.radius);
+                    ctx.lineTo(Math.cos(a)*(e.radius+8), Math.sin(a)*(e.radius+8));
+                    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 3; ctx.stroke();
+                }
             }
-            
+            if (e.ability === 'MASS') { ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke(); }
+
             ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
-            ctx.shadowBlur = 0; // Reset
             
-            // Direction indicator
             if (!e.isPlayer) {
-                ctx.rotate(e.facing);
-                ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
+                ctx.rotate(e.facing); ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
                 ctx.beginPath(); ctx.moveTo(e.radius + 5, 0); ctx.lineTo(e.radius + 15, -5); ctx.lineTo(e.radius + 15, 5); ctx.fill();
                 ctx.rotate(-e.facing);
             }
             
             if (e.stunTimer > 0) {
-                 const time = Date.now() / 100;
-                 ctx.fillStyle = '#fbbf24';
-                 // Stars over head
+                 const time = Date.now() / 100; ctx.fillStyle = '#fbbf24';
                  for(let i=0; i<3; i++) {
                       const starA = time + (Math.PI*2/3)*i;
                       ctx.beginPath(); ctx.arc(Math.cos(starA) * (e.radius + 5), Math.sin(starA) * 5 - e.radius - 5, 3, 0, Math.PI*2); ctx.fill();
                  }
-                 // Stun text
-                 ctx.font = 'bold 10px monospace';
-                 ctx.fillStyle = '#ef4444';
-                 ctx.fillText("STUNNED", 0, 8);
+                 ctx.font = 'bold 10px monospace'; ctx.fillStyle = '#ef4444'; ctx.fillText("STUNNED", -20, 0);
             }
 
-            // Eyes
             const lookAngle = e.facing;
-            const eyeOffX = Math.cos(lookAngle) * 8;
-            const eyeOffY = Math.sin(lookAngle) * 8;
+            const eyeOffX = Math.cos(lookAngle) * 8; const eyeOffY = Math.sin(lookAngle) * 8;
             ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(eyeOffX, eyeOffY, 6, 0, Math.PI*2); ctx.fill();
-
             ctx.restore();
         });
 
-        ref.particles.forEach(p => {
-             ctx.fillStyle = p.color; ctx.globalAlpha = p.life;
-             ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill();
-        });
-        ctx.globalAlpha = 1.0;
+        ref.particles.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill(); });
+        ctx.globalAlpha = 1.0; ctx.restore();
 
-        ctx.restore();
-
-        // --- HUD ---
         const player = getPlayer();
         if (player && !player.dead) {
-             const barW = 100;
-             const barH = 8;
-             const centerX = width / 2;
-             const bottomY = height - 40;
-
-             // Attack Cooldown
+             const barW = 100; const barH = 8; const centerX = width / 2; const bottomY = height - 40;
              const atkPct = Math.max(0, 1 - (player.attackCooldown / player.maxAttackCooldown));
-             ctx.fillStyle = '#1e293b';
-             ctx.fillRect(centerX - barW - 10, bottomY, barW, barH);
-             ctx.fillStyle = atkPct === 1 ? '#ef4444' : '#64748b';
-             ctx.fillRect(centerX - barW - 10, bottomY, barW * atkPct, barH);
-             ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'right';
-             ctx.fillText('EMPURRÃO (SPC)', centerX - 15, bottomY - 5);
+             ctx.fillStyle = '#1e293b'; ctx.fillRect(centerX - barW - 10, bottomY, barW, barH);
+             ctx.fillStyle = atkPct === 1 ? '#ef4444' : '#64748b'; ctx.fillRect(centerX - barW - 10, bottomY, barW * atkPct, barH);
+             ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'right'; ctx.fillText('EMPURRÃO (SPC)', centerX - 15, bottomY - 5);
 
-             // Skill Cooldown
-             const skillPct = Math.max(0, 1 - (player.skillCooldown / player.maxSkillCooldown));
-             ctx.fillStyle = '#1e293b';
-             ctx.fillRect(centerX + 10, bottomY, barW, barH);
-             ctx.fillStyle = skillPct === 1 ? player.color : '#64748b';
-             ctx.fillRect(centerX + 10, bottomY, barW * skillPct, barH);
-             ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left';
-             ctx.fillText('HABILIDADE (E)', centerX + 15, bottomY - 5);
+             const config = ABILITIES[player.ability];
+             if (config.type === 'ACTIVE') {
+                 const skillPct = Math.max(0, 1 - (player.skillCooldown / player.maxSkillCooldown));
+                 ctx.fillStyle = '#1e293b'; ctx.fillRect(centerX + 10, bottomY, barW, barH);
+                 ctx.fillStyle = skillPct === 1 ? player.color : '#64748b'; ctx.fillRect(centerX + 10, bottomY, barW * skillPct, barH);
+                 ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.fillText('HABILIDADE (E)', centerX + 15, bottomY - 5);
+             } else {
+                 ctx.fillStyle = '#64748b'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.fillText('PASSIVA: ATIVA', centerX + 15, bottomY);
+             }
         }
-
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 24px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(`PONTOS: ${ref.currentScore}`, 20, 40);
         
-        ctx.fillStyle = '#64748b';
-        ctx.font = 'bold 16px monospace';
-        ctx.fillText(`RECORD: ${highScore}`, 20, 65);
-
+        ctx.fillStyle = '#0f172a'; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'left'; ctx.fillText(`PONTOS: ${ref.currentScore}`, 20, 40);
+        ctx.fillStyle = '#64748b'; ctx.font = 'bold 16px monospace'; ctx.fillText(`RECORD: ${highScore}`, 20, 65);
         if (gameMode === 'ONLINE') {
-            ctx.fillStyle = isConnected ? '#22c55e' : '#ef4444';
-            ctx.fillText(isConnected ? `ONLINE: ${onlineCount}` : 'CONECTANDO...', 20, 90);
+            ctx.fillStyle = isConnected ? '#22c55e' : '#ef4444'; ctx.fillText(isConnected ? `ONLINE: ${onlineCount}` : 'CONECTANDO...', 20, 90);
         }
-
         if (notification) {
-            ctx.fillStyle = '#fbbf24';
-            ctx.font = 'bold 20px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(notification, width/2, 100);
-            ctx.fillStyle = '#000';
-            ctx.strokeText(notification, width/2, 100);
+            ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText(notification, width/2, 100); ctx.fillStyle = '#000'; ctx.strokeText(notification, width/2, 100);
         }
-
         if (ref.joystick.active) {
             ctx.beginPath(); ctx.arc(ref.joystick.x, ref.joystick.y, 50, 0, Math.PI*2); ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineWidth = 4; ctx.stroke();
             ctx.beginPath(); ctx.arc(ref.joystick.x + ref.joystick.dx, ref.joystick.y + ref.joystick.dy, 25, 0, Math.PI*2); ctx.fillStyle = 'rgba(239, 68, 68, 0.5)'; ctx.fill();
@@ -1113,8 +1061,7 @@ const PushBattles: React.FC = () => {
 
     const drawLobby = (ctx: CanvasRenderingContext2D) => {
          const { width, height } = gameRef.current;
-         ctx.fillStyle = '#f8fafc';
-         ctx.fillRect(0, 0, width, height);
+         ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, width, height);
     };
 
     loop();
@@ -1123,12 +1070,13 @@ const PushBattles: React.FC = () => {
         window.removeEventListener('resize', resize);
         window.removeEventListener('keydown', handleKeyDown);
         window.removeEventListener('keyup', handleKeyUp);
+        window.removeEventListener('mousemove', handleMouseMove);
         canvas.removeEventListener('touchstart', handleTouchStart);
         canvas.removeEventListener('touchmove', handleTouchMove);
         canvas.removeEventListener('touchend', handleTouchEnd);
         cancelAnimationFrame(gameRef.current.animationId);
     };
-  }, [gameState, selectedAbility, gameMode, isConnected, onlineCount, user, careerPushes, isAdmin, notification]);
+  }, [gameState, selectedAbility, gameMode, isConnected, onlineCount, user, careerPushes, isAdmin, notification, proAim]);
 
   const getPlayer = () => gameRef.current.entities.find(e => e.isPlayer);
 
@@ -1139,105 +1087,57 @@ const PushBattles: React.FC = () => {
       {gameState === 'LOBBY' && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-sm z-20 overflow-y-auto py-8">
               <div className="bg-white p-8 rounded-3xl shadow-2xl border border-slate-100 max-w-4xl w-full animate-in zoom-in-95 relative my-auto">
-                  
                   <button onClick={() => setShowSettings(true)} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-700 bg-slate-50 rounded-full hover:bg-slate-100 transition-colors">
                       <Settings size={20} />
                   </button>
-
                   <div className="text-center mb-8">
                     <h2 className="text-4xl font-black text-slate-800 mb-2">PUSH BATTLES</h2>
                     <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full text-slate-600 font-bold text-sm">
                         {loadingProfile ? <Loader2 className="animate-spin" size={14} /> : (
-                            <>
-                                <Target size={14} className="text-red-500" />
-                                <span>TOTAL DE EMPURRÕES: {careerPushes}</span>
-                            </>
+                            <> <Target size={14} className="text-red-500" /> <span>TOTAL DE EMPURRÕES: {careerPushes}</span> </>
                         )}
                     </div>
                   </div>
-
-                  {/* ADMIN CONTROL PANEL */}
                   {isAdmin && (
                       <div className="mb-6 p-4 bg-slate-800 rounded-xl border-l-4 border-yellow-500 shadow-xl">
-                          <div className="flex items-center gap-2 mb-3 text-yellow-400 font-bold text-xs uppercase tracking-widest">
-                              <ShieldAlert size={14} /> Admin Control
-                          </div>
+                          <div className="flex items-center gap-2 mb-3 text-yellow-400 font-bold text-xs uppercase tracking-widest"><ShieldAlert size={14} /> Admin Control</div>
                           <div className="flex items-center gap-4">
                               <div className="flex-1">
                                   <label className="text-xs text-slate-400 block mb-1">Set Career Pushes</label>
-                                  <input 
-                                    type="number" 
-                                    value={careerPushes} 
-                                    onChange={handleAdminScoreChange}
-                                    className="w-full bg-slate-900 border border-slate-700 text-white px-3 py-2 rounded-lg font-mono"
-                                  />
-                              </div>
-                              <div className="text-xs text-slate-500 max-w-[150px]">
-                                  Alterar este valor desbloqueia habilidades instantaneamente.
+                                  <input type="number" value={careerPushes} onChange={handleAdminScoreChange} className="w-full bg-slate-900 border border-slate-700 text-white px-3 py-2 rounded-lg font-mono" />
                               </div>
                           </div>
                       </div>
                   )}
-
                   <div className="flex justify-center gap-4 mb-6">
-                      <button 
-                        onClick={() => setGameMode('BOTS')}
-                        className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${gameMode === 'BOTS' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}
-                      >
+                      <button onClick={() => setGameMode('BOTS')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${gameMode === 'BOTS' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>
                          <Users size={18} /> TREINO (BOTS)
                       </button>
-                      <button 
-                        onClick={() => setGameMode('ONLINE')}
-                        className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${gameMode === 'ONLINE' ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-slate-100 text-slate-500'}`}
-                      >
+                      <button onClick={() => setGameMode('ONLINE')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${gameMode === 'ONLINE' ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-slate-100 text-slate-500'}`}>
                          <Globe size={18} /> ONLINE
                       </button>
                   </div>
-                  
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 mb-8 max-h-[300px] overflow-y-auto p-2">
                       {(Object.entries(ABILITIES) as [string, any][]).map(([key, data]) => {
                           const isDev = key.startsWith('DEV_');
-                          if (isDev && !isAdmin) return null; // Hide dev skills
-
+                          if (isDev && !isAdmin) return null;
                           const isLocked = careerPushes < data.reqPoints && (!isDev || !isAdmin);
                           const isSelected = selectedAbility === key;
-                          
                           return (
-                            <button 
-                                key={key}
-                                onClick={() => !isLocked && setSelectedAbility(key)}
-                                disabled={isLocked}
-                                className={`
-                                    relative p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-3
-                                    ${isSelected ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-white hover:border-slate-300'}
-                                    ${isLocked ? 'opacity-60 cursor-not-allowed bg-slate-50' : 'cursor-pointer'}
-                                    ${isDev ? 'border-yellow-400 bg-slate-900' : ''}
-                                `}
-                            >
+                            <button key={key} onClick={() => !isLocked && setSelectedAbility(key)} disabled={isLocked} className={`relative p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-3 ${isSelected ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-white hover:border-slate-300'} ${isLocked ? 'opacity-60 cursor-not-allowed bg-slate-50' : 'cursor-pointer'} ${isDev ? 'border-yellow-400 bg-slate-900' : ''}`}>
                                 {isLocked && (
                                     <div className="absolute inset-0 bg-slate-100/50 flex flex-col items-center justify-center rounded-2xl z-10 backdrop-blur-[1px]">
                                         <Lock className="text-slate-400 mb-1" size={24} />
                                         <div className="text-xs font-bold text-slate-500 bg-white px-2 py-1 rounded-full shadow-sm">{data.reqPoints}</div>
                                     </div>
                                 )}
-
-                                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-md transition-transform" style={{ backgroundColor: isLocked ? '#94a3b8' : data.color }}>
-                                    {data.icon}
-                                </div>
-                                <div className="text-center w-full">
-                                    <div className={`font-bold text-xs ${isDev ? 'text-yellow-400' : 'text-slate-800'}`}>{data.name}</div>
-                                </div>
+                                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-md transition-transform" style={{ backgroundColor: isLocked ? '#94a3b8' : data.color }}>{data.icon}</div>
+                                <div className="text-center w-full"><div className={`font-bold text-xs ${isDev ? 'text-yellow-400' : 'text-slate-800'}`}>{data.name}</div></div>
                             </button>
                           );
                       })}
                   </div>
-
-                  <button 
-                    onClick={initGame}
-                    className="w-full py-4 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl text-lg shadow-lg shadow-red-500/20 transition-transform active:scale-95"
-                  >
-                      {gameMode === 'ONLINE' ? 'CONECTAR E JOGAR' : 'ENTRAR NA ARENA'}
-                  </button>
+                  <button onClick={initGame} className="w-full py-4 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl text-lg shadow-lg shadow-red-500/20 transition-transform active:scale-95">{gameMode === 'ONLINE' ? 'CONECTAR E JOGAR' : 'ENTRAR NA ARENA'}</button>
               </div>
           </div>
       )}
@@ -1245,14 +1145,26 @@ const PushBattles: React.FC = () => {
       {showSettings && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
                <div className="bg-white p-6 rounded-2xl shadow-xl w-80 animate-in fade-in zoom-in-95">
-                   <div className="flex justify-between items-center mb-6">
-                       <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Settings size={18} /> Configurações</h3>
-                       <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                   <div className="flex justify-between items-center mb-6"><h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Settings size={18} /> Configurações</h3><button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button></div>
+                   
+                   <div className="p-4 bg-slate-50 rounded-lg text-sm text-slate-500 mb-4">
+                       <h4 className="font-bold text-slate-700 mb-2">Controles</h4>
+                       <p>WASD ou Setas para mover. Espaço para atacar. E para habilidade.</p>
                    </div>
-                   <div className="p-4 bg-slate-50 rounded-lg text-sm text-slate-500">
-                       Controles: WASD ou Setas para mover. Espaço para atacar. E para habilidade.
+                   
+                   <div className="mb-6">
+                       <button onClick={handleProAimToggle} className={`w-full p-3 rounded-lg flex items-center justify-between border ${proAim ? 'bg-red-50 border-red-500 text-red-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                           <div className="flex items-center gap-2 font-bold text-sm">
+                               <MousePointer2 size={16} /> Pro Aim (PC)
+                           </div>
+                           <div className={`w-10 h-5 rounded-full relative transition-colors ${proAim ? 'bg-red-500' : 'bg-slate-300'}`}>
+                               <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${proAim ? 'left-6' : 'left-1'}`}></div>
+                           </div>
+                       </button>
+                       <p className="text-[10px] text-slate-400 mt-1 pl-1">A mira segue o cursor do mouse.</p>
                    </div>
-                   <button onClick={() => setShowSettings(false)} className="w-full mt-6 py-2 bg-slate-800 text-white rounded-lg font-bold text-sm">Fechar</button>
+
+                   <button onClick={() => setShowSettings(false)} className="w-full py-2 bg-slate-800 text-white rounded-lg font-bold text-sm">Fechar</button>
                </div>
           </div>
       )}
@@ -1262,12 +1174,7 @@ const PushBattles: React.FC = () => {
               <div className="bg-white p-8 rounded-3xl shadow-2xl border border-slate-100 text-center animate-in zoom-in-95">
                   <h2 className="text-3xl font-black text-slate-800 mb-2">VOCÊ CAIU!</h2>
                   <p className="text-slate-500 mb-6">Pontos nesta partida: <span className="font-bold text-red-500">{gameRef.current.currentScore}</span></p>
-                  
-                  <div className="mb-6 p-4 bg-slate-50 rounded-xl">
-                      <div className="text-xs font-bold text-slate-400 uppercase">Total Carreira</div>
-                      <div className="text-2xl font-black text-slate-800">{careerPushes}</div>
-                  </div>
-
+                  <div className="mb-6 p-4 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase">Total Carreira</div><div className="text-2xl font-black text-slate-800">{careerPushes}</div></div>
                   <button onClick={() => setGameState('LOBBY')} className="px-8 py-3 bg-slate-800 text-white font-bold rounded-xl w-full">VOLTAR AO LOBBY</button>
               </div>
           </div>
@@ -1275,15 +1182,9 @@ const PushBattles: React.FC = () => {
 
       {gameState === 'PLAYING' && (
           <>
-            <div className="absolute bottom-12 left-12 w-32 h-32 rounded-full border-4 border-slate-300/30 flex items-center justify-center pointer-events-none">
-                <div className="text-slate-300/50 font-black text-sm">MOVE</div>
-            </div>
-            <div className="absolute bottom-12 right-12 w-32 h-32 rounded-full bg-red-500/20 border-4 border-red-500/50 flex items-center justify-center pointer-events-none">
-                <div className="text-red-500/50 font-black text-sm">ATK</div>
-            </div>
-            <div className="absolute bottom-48 right-12 w-20 h-20 rounded-full bg-blue-500/20 border-4 border-blue-500/50 flex items-center justify-center pointer-events-none">
-                <div className="text-blue-500/50 font-black text-xs text-center leading-tight">SKILL<br/>(E)</div>
-            </div>
+            <div className="absolute bottom-12 left-12 w-32 h-32 rounded-full border-4 border-slate-300/30 flex items-center justify-center pointer-events-none"><div className="text-slate-300/50 font-black text-sm">MOVE</div></div>
+            <div className="absolute bottom-12 right-12 w-32 h-32 rounded-full bg-red-500/20 border-4 border-red-500/50 flex items-center justify-center pointer-events-none"><div className="text-red-500/50 font-black text-sm">ATK</div></div>
+            <div className="absolute bottom-48 right-12 w-20 h-20 rounded-full bg-blue-500/20 border-4 border-blue-500/50 flex items-center justify-center pointer-events-none"><div className="text-blue-500/50 font-black text-xs text-center leading-tight">SKILL<br/>(E)</div></div>
           </>
       )}
     </div>
