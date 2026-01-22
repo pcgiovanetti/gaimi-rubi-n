@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Crosshair, Loader2, ShieldAlert, Trophy, Circle, Hexagon, Triangle, Square, Star, Crown, Box, Ghost, Anchor, RefreshCw, Link, MousePointer2 } from 'lucide-react';
+import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Crosshair, Loader2, ShieldAlert, Trophy, Circle, Hexagon, Triangle, Square, Star, Crown, Box, Ghost, Anchor, RefreshCw, Link, MousePointer2, Gem, Skull, Bomb, Infinity, CreditCard } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 // Admin Configuration
@@ -11,7 +11,7 @@ interface Trap {
     y: number;
     radius: number;
     ownerId: string;
-    type: 'LEGO' | 'MINE';
+    type: 'LEGO' | 'MINE' | 'BLACKHOLE';
     color: string;
     active: boolean;
 }
@@ -27,6 +27,7 @@ interface Entity {
   color: string;
   isPlayer: boolean;
   isAdmin: boolean;
+  isVip: boolean; // VIP Status
   isRemote?: boolean; 
   
   // Ability System
@@ -63,7 +64,7 @@ interface Entity {
   skillAnim: number; 
 }
 
-const ARENA_RADIUS = 660; 
+const ARENA_RADIUS = 1000; // Increased size significantly
 const PLAYER_RADIUS = 20;
 const FRICTION = 0.92;
 const ATTACK_DURATION = 15; 
@@ -74,8 +75,8 @@ const PUSH_FORCE = 22.0;
 const ABILITIES: Record<string, any> = {
   // --- STARTER ---
   IMPACT: { 
-      type: 'ACTIVE', name: 'Impacto', desc: '[ATIVO] Empurrão clássico em área.', 
-      color: '#3b82f6', icon: <Target />, cooldown: 180, range: 160, force: 35.0, stun: 60, reqPoints: 0 
+      type: 'ACTIVE', name: 'Impacto', desc: '[ATIVO] Empurrão leve em área.', 
+      color: '#3b82f6', icon: <Target />, cooldown: 180, range: 140, force: 18.0, stun: 45, reqPoints: 0 
   },
   
   // --- TIER 1 (Tactical) ---
@@ -100,8 +101,8 @@ const ABILITIES: Record<string, any> = {
 
   // --- TIER 3 (Specialist) ---
   HOOK: { 
-      type: 'ACTIVE', name: 'Gancho', desc: '[ATIVO] Puxa um inimigo até você.', 
-      color: '#d97706', icon: <Link />, cooldown: 300, range: 400, force: -15.0, stun: 60, reqPoints: 500 
+      type: 'ACTIVE', name: 'Gancho', desc: '[ATIVO] Puxa inimigo (Nerfado).', 
+      color: '#d97706', icon: <Link />, cooldown: 300, range: 350, force: -12.0, stun: 30, reqPoints: 500 
   },
   GHOST: { 
       type: 'ACTIVE', name: 'Fantasma', desc: '[ATIVO] Invisível e intangível.', 
@@ -122,8 +123,18 @@ const ABILITIES: Record<string, any> = {
       color: '#1e293b', icon: <Anchor />, cooldown: 0, passiveCooldown: 0, range: 0, force: 0, stun: 0, reqPoints: 2000 
   },
 
+  // --- VIP ONLY ---
+  OVERKILL: { 
+      type: 'PASSIVE', name: 'OVERKILL', desc: '[VIP] HK. Alcance curto. Auto-atk.', 
+      color: '#000000', icon: <Skull />, cooldown: 0, passiveCooldown: 0, range: 35, force: 150.0, stun: 120, reqPoints: 999999 
+  },
+
   // --- DEV ONLY (ADMIN) ---
-  DEV_NOVA: { type: 'ACTIVE', name: '[DEV] NOVA', desc: 'Limpa a tela.', color: '#fbbf24', icon: <Crown />, cooldown: 30, range: 800, force: 150.0, stun: 300, reqPoints: 999999 },
+  ADMIN_BLOCKY: { type: 'PASSIVE', name: '[ADM] BLOCKY', desc: 'Lego Turbo.', color: '#ef4444', icon: <Box />, cooldown: 0, passiveCooldown: 5, range: 0, force: 0, stun: 0, reqPoints: 999999 },
+  ADMIN_FLASH: { type: 'ACTIVE', name: '[ADM] F.L.A.S.H', desc: 'Flash infinito.', color: '#ec4899', icon: <Zap />, cooldown: 10, range: 400, force: 0, stun: 0, reqPoints: 999999 },
+  ADMIN_GOD: { type: 'PASSIVE', name: '[ADM] GOD', desc: 'Invencível + Speed.', color: '#fbbf24', icon: <Crown />, cooldown: 0, passiveCooldown: 0, range: 0, force: 0, stun: 0, reqPoints: 999999 },
+  ADMIN_BLACKHOLE: { type: 'ACTIVE', name: '[ADM] VORTEX', desc: 'Puxa todos.', color: '#4c1d95', icon: <Infinity />, cooldown: 60, range: 1000, force: -5.0, stun: 0, reqPoints: 999999 },
+  ADMIN_NUKE: { type: 'ACTIVE', name: '[ADM] NUKE', desc: 'Explode o mapa.', color: '#b91c1c', icon: <Bomb />, cooldown: 120, range: 2000, force: 200.0, stun: 300, reqPoints: 999999 },
 };
 
 const BOT_NAMES = ["Bot Alpha", "Bot Beta", "Bot Gamma", "Bot Delta", "Bot Omega"];
@@ -142,8 +153,12 @@ const PushBattles: React.FC = () => {
   const [careerPushes, setCareerPushes] = useState(0); 
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isVip, setIsVip] = useState(false); 
   const [notification, setNotification] = useState<string | null>(null);
   
+  // Admin UI State
+  const [targetVipId, setTargetVipId] = useState('');
+
   // Settings
   const [showSettings, setShowSettings] = useState(false);
   const [proAim, setProAim] = useState(false);
@@ -167,9 +182,15 @@ const PushBattles: React.FC = () => {
             const displayName = session.user.user_metadata.full_name || email.split('@')[0];
             myNameRef.current = displayName;
 
-            const { data, error } = await supabase.from('profiles').select('total_pushes').eq('id', session.user.id).single();
-            if (data) setCareerPushes(data.total_pushes || 0);
-            else if (error && error.code === 'PGRST116') await supabase.from('profiles').insert({ id: session.user.id, full_name: displayName, total_pushes: 0 });
+            const { data, error } = await supabase.from('profiles').select('total_pushes, is_vip').eq('id', session.user.id).single();
+            if (data) {
+                setCareerPushes(data.total_pushes || 0);
+                setIsVip(isUserAdmin || data.is_vip || false); // Admin is automatically VIP
+            }
+            else if (error && error.code === 'PGRST116') {
+                await supabase.from('profiles').insert({ id: session.user.id, full_name: displayName, total_pushes: 0, is_vip: isUserAdmin });
+                setIsVip(isUserAdmin);
+            }
         }
         setLoadingProfile(false);
     };
@@ -178,7 +199,6 @@ const PushBattles: React.FC = () => {
     const savedHigh = localStorage.getItem('pushBattlesHigh');
     if (savedHigh) setHighScore(parseInt(savedHigh));
 
-    // Load Pro Aim setting
     const savedProAim = localStorage.getItem('pushBattlesProAim');
     if (savedProAim === 'true') setProAim(true);
 
@@ -199,11 +219,30 @@ const PushBattles: React.FC = () => {
       setTimeout(() => setNotification(null), 3000);
   };
 
+  // ADMIN ACTIONS
   const handleAdminScoreChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!isAdmin || !user) return;
       const val = parseInt(e.target.value) || 0;
       setCareerPushes(val);
       await supabase.from('profiles').update({ total_pushes: val }).eq('id', user.id);
+  };
+
+  const handleGrantVip = async () => {
+      if (!isAdmin || !targetVipId) return;
+      try {
+          const { error } = await supabase.from('profiles').update({ is_vip: true }).eq('id', targetVipId);
+          if (error) throw error;
+          showNotification('VIP Concedido com sucesso!');
+          setTargetVipId('');
+      } catch (err) {
+          showNotification('Erro ao dar VIP. Verifique o ID.');
+      }
+  };
+
+  const handleBuyVip = () => {
+      // Placeholder for future Mercado Pago integration
+      // window.open('LINK_DO_MERCADO_PAGO', '_blank');
+      showNotification('Sistema de Pagamento em Breve!');
   };
 
   const handleProAimToggle = () => {
@@ -228,7 +267,6 @@ const PushBattles: React.FC = () => {
     lastBroadcast: 0
   });
 
-  // Sync state to ref for game loop
   useEffect(() => {
       gameRef.current.settings.proAim = proAim;
   }, [proAim]);
@@ -261,11 +299,11 @@ const PushBattles: React.FC = () => {
        }
   };
 
-  const spawnTrap = (x: number, y: number, type: 'LEGO' | 'MINE', ownerId: string, color: string) => {
+  const spawnTrap = (x: number, y: number, type: 'LEGO' | 'MINE' | 'BLACKHOLE', ownerId: string, color: string) => {
       gameRef.current.traps.push({
           id: Math.random().toString(36),
           x, y, 
-          radius: type === 'LEGO' ? 15 : 20,
+          radius: type === 'LEGO' ? 15 : (type === 'BLACKHOLE' ? 40 : 20),
           type,
           ownerId,
           color,
@@ -288,11 +326,12 @@ const PushBattles: React.FC = () => {
       color: abilityConfig.color,
       isPlayer: true,
       isAdmin: isAdmin,
+      isVip: isVip, 
       ability: selectedAbility,
-      moveSpeed: abilityConfig.name === 'Colosso' ? 0.22 : 0.30, 
-      mass: abilityConfig.name === 'Colosso' ? 2.5 : 1.0,
+      moveSpeed: selectedAbility === 'ADMIN_GOD' ? 0.6 : (abilityConfig.name === 'Colosso' ? 0.22 : 0.30), 
+      mass: selectedAbility === 'ADMIN_GOD' ? 100 : (abilityConfig.name === 'Colosso' ? 2.5 : 1.0),
       invisible: false,
-      invulnerable: false,
+      invulnerable: selectedAbility === 'ADMIN_GOD',
       isAttacking: false,
       attackTimer: 0,
       hitList: [],
@@ -300,7 +339,7 @@ const PushBattles: React.FC = () => {
       attackCooldown: 0,
       skillCooldown: 0,
       maxSkillCooldown: abilityConfig.cooldown || 0,
-      maxAttackCooldown: 40,
+      maxAttackCooldown: selectedAbility === 'OVERKILL' ? 99999 : 40, // Disable manual attack for Overkill
       passiveTimer: abilityConfig.passiveCooldown || 0,
       maxPassiveTimer: abilityConfig.passiveCooldown || 0,
       dead: false,
@@ -388,6 +427,7 @@ const PushBattles: React.FC = () => {
           existing.invisible = data.invisible || false;
           existing.invulnerable = data.invulnerable || false;
           existing.hookTarget = data.hookTarget;
+          existing.isVip = data.isVip;
           
           if (data.stunned) existing.stunTimer = Math.max(existing.stunTimer, 5);
           if (data.dead && !existing.dead) spawnParticles(existing.x, existing.y, existing.color, 20);
@@ -396,7 +436,7 @@ const PushBattles: React.FC = () => {
           const config = ABILITIES[data.ability] || ABILITIES.IMPACT;
           ref.entities.push({
               id: data.id, name: data.name || "Unknown", x: data.x, y: data.y, vx: 0, vy: 0,
-              radius: PLAYER_RADIUS, color: config.color, isPlayer: false, isAdmin: data.isAdmin,
+              radius: PLAYER_RADIUS, color: config.color, isPlayer: false, isAdmin: data.isAdmin, isVip: data.isVip,
               isRemote: true, ability: data.ability, moveSpeed: 0, mass: 1, invisible: false,
               invulnerable: false, isAttacking: false, attackTimer: 0, hitList: [], lastAttackerId: null,
               attackCooldown: 0, skillCooldown: 0, maxSkillCooldown: 0, maxAttackCooldown: 40,
@@ -424,7 +464,7 @@ const PushBattles: React.FC = () => {
           } else if (data.type === 'SKILL') {
               ent.skillAnim = 15;
               const config = ABILITIES[ent.ability] || ABILITIES.IMPACT;
-              if (ent.ability === 'FLASH') spawnParticles(ent.x, ent.y, config.color, 15);
+              if (ent.ability === 'FLASH' || ent.ability === 'ADMIN_FLASH') spawnParticles(ent.x, ent.y, config.color, 15);
               else spawnShockwave(ent.x, ent.y, config.range || 100, config.color, 10);
           }
       }
@@ -433,7 +473,7 @@ const PushBattles: React.FC = () => {
   const handleRemoteHit = (payload: any) => {
       const me = getPlayer();
       if (me && me.id === payload.targetId && !me.dead) {
-          if (me.invulnerable) return; // Repulsor shield
+          if (me.invulnerable) return;
 
           const resistance = me.mass || 1.0;
           const finalForce = payload.force / resistance;
@@ -457,7 +497,7 @@ const PushBattles: React.FC = () => {
 
      return {
          id: `bot-${Math.random()}`, name: BOT_NAMES[index] || `Bot ${index}`, x: Math.cos(angle) * dist, y: Math.sin(angle) * dist,
-         vx: 0, vy: 0, radius: PLAYER_RADIUS, color: config.color, isPlayer: false, isAdmin: false,
+         vx: 0, vy: 0, radius: PLAYER_RADIUS, color: config.color, isPlayer: false, isAdmin: false, isVip: false,
          ability: randomAbility, moveSpeed: randomAbility === 'MASS' ? 0.22 : 0.25, mass: randomAbility === 'MASS' ? 2.5 : 1.0,
          invisible: false, invulnerable: false, isAttacking: false, attackTimer: 0, hitList: [], lastAttackerId: null,
          attackCooldown: 0, skillCooldown: 0, maxSkillCooldown: config.cooldown, maxAttackCooldown: 40,
@@ -616,6 +656,7 @@ const PushBattles: React.FC = () => {
     };
 
     const startBasicAttack = (ent: Entity) => {
+        if (ent.ability === 'OVERKILL') return; // Cannot attack manually
         ent.isAttacking = true;
         ent.attackTimer = ATTACK_DURATION;
         ent.hitList = [];
@@ -640,7 +681,7 @@ const PushBattles: React.FC = () => {
             spawnParticles(ent.x, ent.y, config.color, 10);
             applyAreaEffect(ent, 80, 20, 30, false);
         }
-        else if (ent.ability === 'FLASH') {
+        else if (ent.ability === 'FLASH' || ent.ability === 'ADMIN_FLASH') {
             ent.x += Math.cos(ent.facing) * config.range;
             ent.y += Math.sin(ent.facing) * config.range;
             spawnParticles(ent.x, ent.y, config.color, 20);
@@ -651,12 +692,19 @@ const PushBattles: React.FC = () => {
         }
         else if (ent.ability === 'REPULSOR') {
             ent.invulnerable = true;
-            // Invulnerability lasts for 2s, handled in update loop by skillCooldown check
             spawnShockwave(ent.x, ent.y, 60, config.color, 12);
         }
-        else if (ent.ability === 'IMPACT' || ent.ability === 'DEV_NOVA') {
+        else if (ent.ability === 'IMPACT' || ent.ability === 'DEV_NOVA' || ent.ability === 'ADMIN_NUKE') {
             spawnShockwave(ent.x, ent.y, config.range, config.color, 15);
             applyAreaEffect(ent, config.range, config.force, config.stun, false);
+        }
+        else if (ent.ability === 'ADMIN_BLACKHOLE') {
+             gameRef.current.entities.forEach(target => {
+                 if (target.id === ent.id || target.dead) return;
+                 const angle = Math.atan2(ent.y - target.y, ent.x - target.x);
+                 applyForce(target, ent.id, angle, 10.0, 5); // Constant suck
+             });
+             spawnShockwave(ent.x, ent.y, 100, '#4c1d95', 5);
         }
         else if (ent.ability === 'HOOK') {
              // Find nearest target in cone
@@ -681,11 +729,11 @@ const PushBattles: React.FC = () => {
 
              if (target) {
                  ent.hookTarget = { x: target.x, y: target.y };
-                 // Pull target towards me
+                 // NERF: Gentle pull, don't pass
                  const pullAngle = Math.atan2(ent.y - target.y, ent.x - target.x);
-                 applyForce(target, ent.id, pullAngle, 40, 60); // Strong pull
+                 // Reduced force significantly so they don't overshoot
+                 applyForce(target, ent.id, pullAngle, 12, 30); 
              } else {
-                 // Miss visual
                  ent.hookTarget = { x: ent.x + Math.cos(ent.facing)*config.range, y: ent.y + Math.sin(ent.facing)*config.range };
              }
         }
@@ -708,7 +756,6 @@ const PushBattles: React.FC = () => {
                     target.x = tempX; target.y = tempY;
                     target.stunTimer = 30; // Confused
                 } else if (gameMode === 'ONLINE' && channelRef.current) {
-                    // Force update remote position locally (visual) and send packet
                     channelRef.current.send({
                          type: 'broadcast',
                          event: 'player_teleport',
@@ -724,7 +771,7 @@ const PushBattles: React.FC = () => {
 
     const triggerPassive = (ent: Entity) => {
         const config = ABILITIES[ent.ability];
-        if (ent.ability === 'LEGO') {
+        if (ent.ability === 'LEGO' || ent.ability === 'ADMIN_BLOCKY') {
             spawnTrap(ent.x, ent.y, 'LEGO', ent.id, config.color);
             if (gameMode === 'ONLINE' && channelRef.current && ent.isPlayer) {
                  channelRef.current.send({ type: 'broadcast', event: 'ability_trigger', payload: { type: 'LEGO', x: ent.x, y: ent.y, id: ent.id, color: config.color } });
@@ -757,7 +804,7 @@ const PushBattles: React.FC = () => {
                         id: player.id, name: player.name, isAdmin: player.isAdmin, x: player.x, y: player.y,
                         vx: player.vx, vy: player.vy, facing: player.facing, ability: player.ability,
                         dead: player.dead, stunned: player.stunTimer > 0, invisible: player.invisible,
-                        invulnerable: player.invulnerable, hookTarget: player.hookTarget
+                        invulnerable: player.invulnerable, hookTarget: player.hookTarget, isVip: player.isVip
                     }
                 });
                 ref.lastBroadcast = now;
@@ -774,7 +821,7 @@ const PushBattles: React.FC = () => {
 
             // Special statuses expiration
             if (e.invisible && e.skillCooldown <= e.maxSkillCooldown - 120) e.invisible = false;
-            if (e.invulnerable && e.skillCooldown <= e.maxSkillCooldown - 120) e.invulnerable = false;
+            if (e.invulnerable && e.skillCooldown <= e.maxSkillCooldown - 120 && e.ability !== 'ADMIN_GOD') e.invulnerable = false;
 
             if (!e.isRemote && e.maxPassiveTimer > 0) {
                 e.passiveTimer--;
@@ -785,6 +832,21 @@ const PushBattles: React.FC = () => {
             }
             
             if (!e.isRemote && e.ability === 'SPIKES' && !e.invisible) applyAreaEffect(e, 40, 15, 10, false);
+            
+            // VIP Overkill Logic (Passive Aura)
+            if (!e.isRemote && e.ability === 'OVERKILL') {
+                 ref.entities.forEach(target => {
+                      if (target.id === e.id || target.dead) return;
+                      const dx = target.x - e.x; const dy = target.y - e.y;
+                      const dist = Math.sqrt(dx*dx + dy*dy);
+                      // Reduced range, HUGE force
+                      if (dist < ABILITIES.OVERKILL.range + target.radius) {
+                          const angle = Math.atan2(dy, dx);
+                          applyForce(target, e.id, angle, ABILITIES.OVERKILL.force, ABILITIES.OVERKILL.stun);
+                          spawnParticles(target.x, target.y, '#000000', 10);
+                      }
+                 });
+            }
 
             if (e.isAttacking) {
                 e.attackTimer--;
@@ -881,7 +943,8 @@ const PushBattles: React.FC = () => {
         ref.traps = ref.traps.filter(t => t.active);
 
         if (player && !player.dead && player.stunTimer <= 0) {
-            if (ref.keys.attack && player.attackCooldown <= 0 && !player.isAttacking) {
+            // Manual attack disabled for Overkill
+            if (ref.keys.attack && player.attackCooldown <= 0 && !player.isAttacking && player.ability !== 'OVERKILL') {
                 startBasicAttack(player);
                 if (gameMode === 'ONLINE' && channelRef.current) {
                     channelRef.current.send({ type: 'broadcast', event: 'player_attack', payload: { id: player.id, type: 'BASIC' } });
@@ -985,9 +1048,29 @@ const PushBattles: React.FC = () => {
                 ctx.strokeStyle = '#10b981'; ctx.lineWidth = 2; ctx.stroke();
                 ctx.fillStyle = 'rgba(16, 185, 129, 0.2)'; ctx.fill();
             }
+            
+            // VIP Crown and Golden Name
+            if (e.isVip) {
+                 ctx.save();
+                 ctx.translate(0, -e.radius - 25);
+                 // Simple Crown
+                 ctx.beginPath();
+                 ctx.fillStyle = '#fbbf24'; // Gold
+                 ctx.moveTo(-8, 0); ctx.lineTo(-12, -8); ctx.lineTo(-4, -4); ctx.lineTo(0, -10); ctx.lineTo(4, -4); ctx.lineTo(12, -8); ctx.lineTo(8, 0);
+                 ctx.fill();
+                 ctx.restore();
+            }
 
-            ctx.save(); ctx.fillStyle = e.isAdmin ? '#fbbf24' : '#64748b'; 
-            ctx.font = e.isAdmin ? 'bold 12px monospace' : 'bold 11px monospace'; ctx.textAlign = 'center'; ctx.fillText(e.name.toUpperCase(), 0, -e.radius - 12); ctx.restore();
+            // Name Color Logic
+            ctx.save(); 
+            if (e.isAdmin) ctx.fillStyle = '#ef4444'; // Red for Admin
+            else if (e.isVip) ctx.fillStyle = '#fbbf24'; // Yellow for VIP
+            else ctx.fillStyle = '#64748b'; // Slate for others
+
+            ctx.font = (e.isAdmin || e.isVip) ? 'bold 12px monospace' : 'bold 11px monospace'; 
+            ctx.textAlign = 'center'; 
+            ctx.fillText(e.name.toUpperCase(), 0, -e.radius - 12); 
+            ctx.restore();
 
             ctx.fillStyle = e.stunTimer > 0 ? '#94a3b8' : e.color; 
             if (e.ability === 'SPIKES') {
@@ -999,6 +1082,7 @@ const PushBattles: React.FC = () => {
                 }
             }
             if (e.ability === 'MASS') { ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke(); }
+            if (e.ability === 'OVERKILL') { ctx.lineWidth = 3; ctx.strokeStyle = '#ff0000'; ctx.stroke(); }
 
             ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
             
@@ -1032,7 +1116,7 @@ const PushBattles: React.FC = () => {
              const atkPct = Math.max(0, 1 - (player.attackCooldown / player.maxAttackCooldown));
              ctx.fillStyle = '#1e293b'; ctx.fillRect(centerX - barW - 10, bottomY, barW, barH);
              ctx.fillStyle = atkPct === 1 ? '#ef4444' : '#64748b'; ctx.fillRect(centerX - barW - 10, bottomY, barW * atkPct, barH);
-             ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'right'; ctx.fillText('EMPURRÃO (SPC)', centerX - 15, bottomY - 5);
+             ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'right'; ctx.fillText(player.ability === 'OVERKILL' ? 'AUTO-ATK' : 'EMPURRÃO (SPC)', centerX - 15, bottomY - 5);
 
              const config = ABILITIES[player.ability];
              if (config.type === 'ACTIVE') {
@@ -1076,7 +1160,7 @@ const PushBattles: React.FC = () => {
         canvas.removeEventListener('touchend', handleTouchEnd);
         cancelAnimationFrame(gameRef.current.animationId);
     };
-  }, [gameState, selectedAbility, gameMode, isConnected, onlineCount, user, careerPushes, isAdmin, notification, proAim]);
+  }, [gameState, selectedAbility, gameMode, isConnected, onlineCount, user, careerPushes, isAdmin, notification, proAim, isVip]);
 
   const getPlayer = () => gameRef.current.entities.find(e => e.isPlayer);
 
@@ -1092,19 +1176,40 @@ const PushBattles: React.FC = () => {
                   </button>
                   <div className="text-center mb-8">
                     <h2 className="text-4xl font-black text-slate-800 mb-2">PUSH BATTLES</h2>
-                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full text-slate-600 font-bold text-sm">
-                        {loadingProfile ? <Loader2 className="animate-spin" size={14} /> : (
-                            <> <Target size={14} className="text-red-500" /> <span>TOTAL DE EMPURRÕES: {careerPushes}</span> </>
+                    <div className="flex flex-col items-center gap-2">
+                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full text-slate-600 font-bold text-sm">
+                            {loadingProfile ? <Loader2 className="animate-spin" size={14} /> : (
+                                <> <Target size={14} className="text-red-500" /> <span>TOTAL DE EMPURRÕES: {careerPushes}</span> </>
+                            )}
+                        </div>
+                        {isVip && (
+                            <div className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-600 rounded-full text-xs font-bold border border-yellow-200">
+                                <Crown size={12} fill="currentColor" /> VIP MEMBER
+                            </div>
+                        )}
+                        {!isVip && !loadingProfile && (
+                            <button onClick={handleBuyVip} className="inline-flex items-center gap-2 px-4 py-1.5 bg-yellow-400 hover:bg-yellow-500 text-black rounded-full text-xs font-bold shadow-lg shadow-yellow-500/30 transition-all active:scale-95 animate-pulse">
+                                <CreditCard size={14} /> SEJA VIP - R$ 6,80/mês
+                            </button>
                         )}
                     </div>
                   </div>
                   {isAdmin && (
                       <div className="mb-6 p-4 bg-slate-800 rounded-xl border-l-4 border-yellow-500 shadow-xl">
                           <div className="flex items-center gap-2 mb-3 text-yellow-400 font-bold text-xs uppercase tracking-widest"><ShieldAlert size={14} /> Admin Control</div>
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-4 mb-4">
                               <div className="flex-1">
                                   <label className="text-xs text-slate-400 block mb-1">Set Career Pushes</label>
                                   <input type="number" value={careerPushes} onChange={handleAdminScoreChange} className="w-full bg-slate-900 border border-slate-700 text-white px-3 py-2 rounded-lg font-mono" />
+                              </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                              <div className="flex-1">
+                                  <label className="text-xs text-slate-400 block mb-1">Conceder VIP (User ID)</label>
+                                  <div className="flex gap-2">
+                                      <input type="text" value={targetVipId} onChange={(e) => setTargetVipId(e.target.value)} placeholder="UUID..." className="w-full bg-slate-900 border border-slate-700 text-white px-3 py-2 rounded-lg font-mono text-xs" />
+                                      <button onClick={handleGrantVip} className="px-3 bg-yellow-500 text-black font-bold rounded-lg text-xs hover:bg-yellow-400">DAR VIP</button>
+                                  </div>
                               </div>
                           </div>
                       </div>
@@ -1119,9 +1224,17 @@ const PushBattles: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 mb-8 max-h-[300px] overflow-y-auto p-2">
                       {(Object.entries(ABILITIES) as [string, any][]).map(([key, data]) => {
-                          const isDev = key.startsWith('DEV_');
+                          const isDev = key.startsWith('DEV_') || key.startsWith('ADMIN_');
                           if (isDev && !isAdmin) return null;
-                          const isLocked = careerPushes < data.reqPoints && (!isDev || !isAdmin);
+                          
+                          // VIP UNLOCK: If isVip, unlock everything except DEV/ADMIN skills (unless admin)
+                          let isLocked = !isVip && careerPushes < data.reqPoints;
+                          
+                          // Overkill is VIP only
+                          if (key === 'OVERKILL') isLocked = !isVip && !isAdmin;
+                          // Admin skills
+                          if (isDev) isLocked = !isAdmin;
+
                           const isSelected = selectedAbility === key;
                           return (
                             <button key={key} onClick={() => !isLocked && setSelectedAbility(key)} disabled={isLocked} className={`relative p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-3 ${isSelected ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-white hover:border-slate-300'} ${isLocked ? 'opacity-60 cursor-not-allowed bg-slate-50' : 'cursor-pointer'} ${isDev ? 'border-yellow-400 bg-slate-900' : ''}`}>
