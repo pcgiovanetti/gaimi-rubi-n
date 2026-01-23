@@ -1040,49 +1040,47 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             ctx.shadowColor = color;
         }
 
-        // Background
+        // Glassmorphism Background
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'; // More translucent
         ctx.fill();
-        ctx.shadowBlur = 0; // Reset shadow
+        ctx.shadowBlur = 0; 
 
-        // Progress Arc (Cooldown overlay)
+        // Progress Ring
         if (!isReady) {
             ctx.beginPath();
-            ctx.moveTo(x, y);
-            // Draw cooldown pie slice
-            ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * (1 - progress)));
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * progress));
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            
+            // Dimmed inside
+            ctx.beginPath();
+            ctx.arc(x, y, r - 4, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
             ctx.fill();
+        } else {
+            // Full ring when ready
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            ctx.stroke();
         }
 
-        // Border Ring
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.strokeStyle = isReady ? color : '#475569';
-        ctx.lineWidth = isReady ? 3 : 2;
-        ctx.stroke();
-
-        // Inner Circle (Button look)
-        ctx.beginPath();
-        ctx.arc(x, y, r - 5, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
         // Label
-        ctx.fillStyle = isReady ? '#ffffff' : '#94a3b8';
+        ctx.fillStyle = isReady ? '#ffffff' : 'rgba(255,255,255,0.5)';
         ctx.font = 'bold 12px monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(label, x, y - 2);
+        ctx.fillText(label, x, y);
         
-        // Keybind Text
+        // Keybind Text (PC)
         if (!isMobile) {
-            ctx.fillStyle = '#64748b';
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
             ctx.font = 'bold 10px monospace';
-            ctx.fillText(keyName, x, y + 12);
+            ctx.fillText(keyName, x, y + r + 15);
         }
 
         ctx.restore();
@@ -1171,14 +1169,15 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             if (player && !player.dead) {
                  const atkPct = Math.max(0, 1 - (player.attackCooldown / player.maxAttackCooldown));
                  
-                 // Attack Button (Bottom Right)
-                 drawCooldownCircle(ctx, width - 60, height - 60, 30, atkPct, '#ef4444', 'ATK', 'SPACE');
+                 // Attack Button (Vertically Centered on Right Side)
+                 // Positioned slightly below center for thumb ergonomics
+                 drawCooldownCircle(ctx, width - 70, height / 2 + 40, 35, atkPct, '#ef4444', 'ATK', 'SPACE');
 
                  const config = ABILITIES[player.ability];
                  if (config.type === 'ACTIVE') {
                      const skillPct = Math.max(0, 1 - (player.skillCooldown / player.maxSkillCooldown));
-                     // Skill Button (Left of Attack)
-                     drawCooldownCircle(ctx, width - 130, height - 60, 25, skillPct, player.color, 'SKILL', 'E');
+                     // Skill Button (Above Attack)
+                     drawCooldownCircle(ctx, width - 70, height / 2 - 50, 30, skillPct, player.color, 'SKILL', 'E');
                  }
                  
                  if (gameMode === 'BOTS') {
@@ -1408,16 +1407,16 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
       {gameState === 'PLAYING' && (
           <>
             {isMobile && (
-                <div className="absolute bottom-6 right-6 flex flex-col gap-4 z-40">
+                <div className="absolute top-1/2 right-4 -translate-y-1/2 flex flex-col gap-6 z-40 items-center">
                     <button 
                         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleMobileSkill(); }} 
-                        className="w-14 h-14 md:w-16 md:h-16 bg-blue-500/80 backdrop-blur border-2 border-white/30 rounded-full flex items-center justify-center text-white font-black shadow-lg active:scale-90 transition-transform select-none"
+                        className="w-14 h-14 bg-blue-500/80 backdrop-blur-md border-2 border-white/30 rounded-full flex items-center justify-center text-white font-black shadow-lg active:scale-90 transition-transform select-none"
                     >
                         E
                     </button>
                     <button 
                         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleMobileAttack(); }} 
-                        className="w-20 h-20 md:w-24 md:h-24 bg-red-500/80 backdrop-blur border-4 border-white/30 rounded-full flex items-center justify-center text-white font-black shadow-xl active:scale-90 transition-transform select-none"
+                        className="w-16 h-16 bg-red-500/80 backdrop-blur-md border-4 border-white/30 rounded-full flex items-center justify-center text-white font-black shadow-xl active:scale-90 transition-transform select-none"
                     >
                         ATK
                     </button>
