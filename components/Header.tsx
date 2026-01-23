@@ -25,17 +25,17 @@ const Header: React.FC<HeaderProps> = ({ user, isVip, lang, setLang, onLogin, on
 
   return (
     <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-50">
-      <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-        <div className="flex items-center gap-3 group cursor-pointer">
-          <div className="p-2 rounded-xl bg-slate-50 group-hover:bg-red-50 transition-colors duration-500">
-            <Gem className="w-5 h-5 text-slate-300 group-hover:text-red-500 transition-colors duration-500" />
+      <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 md:h-20 flex items-center justify-between">
+        <div className="flex items-center gap-2 md:gap-3 group cursor-pointer">
+          <div className="p-1.5 md:p-2 rounded-xl bg-slate-50 group-hover:bg-red-50 transition-colors duration-500">
+            <Gem className="w-4 h-4 md:w-5 md:h-5 text-slate-300 group-hover:text-red-500 transition-colors duration-500" />
           </div>
-          <h1 className="text-2xl font-light tracking-tight text-slate-900 group-hover:tracking-wide transition-all duration-500">
+          <h1 className="text-lg md:text-2xl font-light tracking-tight text-slate-900 group-hover:tracking-wide transition-all duration-500">
             gaimi <span className="font-semibold text-slate-900">rubi</span>
           </h1>
         </div>
         
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3 md:gap-6">
           <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
             <a href="#" className="hover:text-red-500 transition-colors duration-300">{t.games}</a>
             <a href="#" className="hover:text-red-500 transition-colors duration-300">{t.about}</a>
@@ -44,14 +44,14 @@ const Header: React.FC<HeaderProps> = ({ user, isVip, lang, setLang, onLogin, on
           {/* Language Toggle */}
           <button 
             onClick={() => setLang(lang === 'en' ? 'pt' : 'en')}
-            className="flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-slate-800 transition-colors uppercase"
+            className="flex items-center gap-1 text-[10px] md:text-xs font-bold text-slate-400 hover:text-slate-800 transition-colors uppercase"
           >
-            <Globe size={14} />
+            <Globe size={12} md:size={14} />
             {lang}
           </button>
 
           {user ? (
-             <div className="flex items-center gap-4 pl-6 border-l border-slate-100">
+             <div className="flex items-center gap-2 md:gap-4 pl-3 md:pl-6 border-l border-slate-100">
                 {!isVip && (
                     <button onClick={onBuyVip} className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-yellow-400 hover:bg-yellow-500 text-black rounded-lg text-xs font-bold shadow-md shadow-yellow-500/20 transition-all active:scale-95">
                         <CreditCard size={14} /> {t.vipButton}
@@ -59,28 +59,28 @@ const Header: React.FC<HeaderProps> = ({ user, isVip, lang, setLang, onLogin, on
                 )}
                 
                 <div className="text-right hidden sm:block">
-                  <div className={`text-xs font-bold flex items-center justify-end gap-1 ${isAdmin ? 'text-red-500' : isVip ? 'text-yellow-600' : 'text-slate-900'}`}>
+                  <div className={`text-[10px] md:text-xs font-bold flex items-center justify-end gap-1 ${isAdmin ? 'text-red-500' : isVip ? 'text-yellow-600' : 'text-slate-900'}`}>
                       {displayName}
-                      {(isAdmin || isVip) && <Crown size={12} fill="currentColor" className={isAdmin ? 'text-red-500' : 'text-yellow-500'} />}
+                      {(isAdmin || isVip) && <Crown size={10} md:size={12} fill="currentColor" className={isAdmin ? 'text-red-500' : 'text-yellow-500'} />}
                   </div>
-                  <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-                      {isAdmin ? 'Admin' : isVip ? 'VIP Member' : 'Player'}
+                  <div className="text-[8px] md:text-[10px] text-slate-400 font-medium uppercase tracking-wider">
+                      {isAdmin ? 'Admin' : isVip ? 'VIP' : 'Player'}
                   </div>
                 </div>
                 <button 
                   onClick={onLogout}
-                  className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-lg transition-colors"
+                  className="p-1.5 md:p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-lg transition-colors"
                   title="Sair"
                 >
-                  <LogOut size={18} />
+                  <LogOut size={16} md:size={18} />
                 </button>
              </div>
           ) : (
             <button 
               onClick={onLogin}
-              className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-slate-900 text-white rounded-lg text-xs md:text-sm font-bold hover:bg-slate-800 transition-colors"
             >
-              <User size={16} />
+              <User size={14} md:size={16} />
               <span>{t.login}</span>
             </button>
           )}

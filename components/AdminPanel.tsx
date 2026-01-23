@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldAlert, X, Check, AlertCircle } from 'lucide-react';
+import { ShieldAlert, X, Check, AlertCircle, Info } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface AdminPanelProps {
@@ -15,33 +15,43 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, currentPushes, onUpdat
     const [status, setStatus] = useState<{type: 'success' | 'error', msg: string} | null>(null);
 
     const handleGrantVip = async () => {
-        if (!targetId.trim()) return;
+        const cleanId = targetId.trim();
+        if (!cleanId) return;
+        
         setLoading(true);
         setStatus(null);
         
         try {
-            // Tenta atualizar a coluna is_vip na tabela profiles
+            // Usamos UPSERT em vez de UPDATE. 
+            // Se o perfil não existir na tabela public.profiles, ele será criado.
             const { error, data } = await supabase
                 .from('profiles')
-                .update({ is_vip: true })
-                .eq('id', targetId.trim())
+                .upsert({ 
+                    id: cleanId, 
+                    is_vip: true 
+                })
                 .select();
 
             if (error) throw error;
             
             if (!data || data.length === 0) {
-                throw new Error('Usuário não encontrado. Verifique o UUID.');
+                throw new Error('Não foi possível processar o ID. Verifique o console.');
             }
 
             setStatus({ type: 'success', msg: 'VIP concedido com sucesso!' });
             setTargetId('');
         } catch (e: any) {
-            console.error(e);
+            console.error("Erro detalhado:", e);
+            
+            let userMsg = e.message;
+            if (e.code === '42P10') userMsg = "Coluna 'is_vip' não encontrada. Execute o SQL de alteração da tabela.";
+            if (e.message.includes('new row violates row level security')) {
+                userMsg = "Erro de Permissão (RLS). Você precisa executar o SQL de POLICY no painel do Supabase.";
+            }
+
             setStatus({ 
                 type: 'error', 
-                msg: e.message.includes('is_vip') 
-                    ? 'Erro: A coluna is_vip ainda não existe na tabela profiles.' 
-                    : 'Erro: ' + e.message 
+                msg: userMsg 
             });
         } finally {
             setLoading(false);
@@ -58,8 +68,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, currentPushes, onUpdat
                 </div>
 
                 <div className="space-y-6">
-                    <div className="p-4 bg-blue-900/20 border border-blue-500/20 rounded-2xl text-xs text-blue-300 leading-relaxed">
-                        Para ver o UUID de um jogador, peça para ele abrir o <strong>Perfil</strong> e clicar no ícone de copiar ao lado do ID.
+                    <div className="p-4 bg-blue-900/20 border border-blue-500/20 rounded-2xl text-[11px] text-blue-300 leading-relaxed flex gap-3">
+                        <Info size={24} className="shrink-0 text-blue-400" />
+                        <div>
+                            Se der erro de <strong>"Usuário não encontrado"</strong> ou <strong>"Permissão"</strong>, certifique-se de ter rodado as <strong>POLICIES</strong> no SQL Editor do Supabase para o seu e-mail de Admin.
+                        </div>
                     </div>
 
                     <div>
@@ -69,7 +82,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, currentPushes, onUpdat
                                 type="text" 
                                 value={targetId}
                                 onChange={(e) => setTargetId(e.target.value)}
-                                placeholder="e4cc74aa-..."
+                                placeholder="Cole o UUID aqui..."
                                 className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-white font-mono text-xs focus:ring-2 focus:ring-yellow-500/50 outline-none transition-all"
                             />
                             <button 
@@ -82,7 +95,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, currentPushes, onUpdat
                         </div>
                         
                         {status && (
-                            <div className={`mt-4 p-3 rounded-xl flex items-center gap-2 text-xs font-bold animate-in slide-in-from-top-2 ${status.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                            <div className={`mt-4 p-3 rounded-xl flex items-center gap-2 text-[11px] font-bold animate-in slide-in-from-top-2 ${status.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
                                 {status.type === 'success' ? <Check size={14}/> : <AlertCircle size={14}/>}
                                 {status.msg}
                             </div>
@@ -91,7 +104,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, currentPushes, onUpdat
                 </div>
 
                 <div className="mt-8 pt-4 border-t border-slate-800 text-[10px] text-slate-600 text-center font-bold">
-                    GAIMI RUBI ADMIN SYSTEM v1.2
+                    GAIMI RUBI ADMIN SYSTEM v1.3
                 </div>
             </div>
         </div>

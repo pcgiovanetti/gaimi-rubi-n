@@ -71,33 +71,33 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, lang, onBack, onUnlockAch
   return (
     <div 
       ref={containerRef} 
-      className={`bg-white flex flex-col ${isFullscreen ? 'w-full h-screen' : 'w-full min-h-[600px] rounded-2xl border border-slate-200 shadow-2xl overflow-hidden'}`}
+      className={`bg-white flex flex-col ${isFullscreen ? 'w-full h-screen' : 'w-full h-full md:min-h-[600px] md:rounded-2xl md:border md:border-slate-200 md:shadow-2xl overflow-hidden'}`}
     >
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white/90 backdrop-blur z-10 shrink-0">
-        <div className="flex items-center gap-4">
+      <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4 border-b border-slate-100 bg-white/90 backdrop-blur z-10 shrink-0">
+        <div className="flex items-center gap-3 md:gap-4">
           <button 
             onClick={onBack}
-            className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-500 hover:text-slate-900"
+            className="p-1.5 md:p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-500 hover:text-slate-900"
             title="Voltar ao menu"
           >
-            <ArrowLeft size={20} />
+            <ArrowLeft size={18} md:size={20} />
           </button>
-          <h2 className="text-lg font-medium text-slate-800">{game.title}</h2>
+          <h2 className="text-sm md:text-lg font-medium text-slate-800 truncate max-w-[150px] md:max-w-none">{game.title}</h2>
         </div>
 
         <button 
           onClick={toggleFullscreen}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs md:text-sm font-medium transition-colors"
         >
           {isFullscreen ? (
             <>
-              <Minimize2 size={16} />
-              <span>Exit Fullscreen</span>
+              <Minimize2 size={14} md:size={16} />
+              <span className="hidden sm:inline">Exit Fullscreen</span>
             </>
           ) : (
             <>
-              <Maximize2 size={16} />
-              <span>Fullscreen</span>
+              <Maximize2 size={14} md:size={16} />
+              <span className="hidden sm:inline">Fullscreen</span>
             </>
           )}
         </button>

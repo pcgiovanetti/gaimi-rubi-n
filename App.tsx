@@ -99,7 +99,7 @@ const App: React.FC = () => {
 
   if (activeGame) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="fixed inset-0 bg-slate-50 flex items-center justify-center z-50 overflow-hidden">
         <GamePlayer 
           game={activeGame}
           lang={lang}
@@ -112,7 +112,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white selection:bg-red-500 selection:text-white font-sans">
+    <div className="min-h-screen bg-white selection:bg-red-500 selection:text-white font-sans overflow-x-hidden">
       <Header 
         user={user} 
         isVip={isVip}
@@ -123,36 +123,36 @@ const App: React.FC = () => {
         onBuyVip={() => setShowVipModal(true)}
       />
       
-      <main className="max-w-7xl mx-auto px-6 py-20 md:py-32">
-        {/* Admin & Profile Controls (Top Right of Content) */}
+      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-24">
+        {/* Admin & Profile Controls */}
         {user && (
-            <div className="absolute top-24 right-6 flex flex-col gap-2 items-end">
+            <div className="flex flex-wrap gap-2 justify-center md:justify-end mb-8 md:absolute md:top-24 md:right-6 md:mb-0">
                 {isAdmin && (
-                    <button onClick={() => setShowAdmin(true)} className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-yellow-500 font-bold rounded-full text-xs hover:bg-slate-800 shadow-xl">
-                        <Shield size={14} /> ADMIN
+                    <button onClick={() => setShowAdmin(true)} className="flex items-center gap-2 px-3 py-2 bg-slate-900 text-yellow-500 font-bold rounded-full text-[10px] md:text-xs hover:bg-slate-800 shadow-xl">
+                        <Shield size={12} /> ADMIN
                     </button>
                 )}
-                <button onClick={() => setShowProfile(true)} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-600 font-bold rounded-full text-xs hover:bg-slate-50 shadow-sm">
-                    <UserIcon size={14} /> {t.profile}
+                <button onClick={() => setShowProfile(true)} className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 text-slate-600 font-bold rounded-full text-[10px] md:text-xs hover:bg-slate-50 shadow-sm">
+                    <UserIcon size={12} /> {t.profile}
                 </button>
             </div>
         )}
 
         {/* Hero */}
-        <div className="max-w-3xl mx-auto text-center mb-32">
-          <h1 className="text-6xl md:text-8xl font-thin tracking-tighter text-slate-900 mb-8">
+        <div className="max-w-3xl mx-auto text-center mb-10 md:mb-24">
+          <h1 className="text-3xl md:text-8xl font-thin tracking-tighter text-slate-900 mb-4 md:mb-6">
             gaimi <span className="font-medium text-slate-900">rubi</span>
           </h1>
-          <p className="text-lg md:text-xl text-slate-400 font-light mb-8">
+          <p className="text-sm md:text-xl text-slate-400 font-light mb-6 md:mb-8 px-4">
             {t.heroSubtitle}
           </p>
           
           {!isVip && (
               <button 
                 onClick={() => setShowVipModal(true)} 
-                className="mb-12 px-6 py-2 bg-yellow-400 hover:bg-yellow-500 text-black font-bold rounded-full text-sm shadow-lg shadow-yellow-500/20 transition-transform active:scale-95 flex items-center gap-2 mx-auto"
+                className="mb-8 md:mb-10 px-5 py-2 md:px-6 md:py-2 bg-yellow-400 hover:bg-yellow-500 text-black font-bold rounded-full text-xs md:text-sm shadow-lg shadow-yellow-500/20 transition-transform active:scale-95 flex items-center gap-2 mx-auto"
               >
-                  <Crown size={16} /> {t.vipButton}
+                  <Crown size={14} /> {t.vipButton}
               </button>
           )}
           
@@ -160,7 +160,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Catalog */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-16">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 md:gap-x-8 gap-y-10 md:gap-y-16">
           {displayGames.map((game) => (
             <GameCard 
               key={game.id} 
@@ -177,8 +177,8 @@ const App: React.FC = () => {
         )}
       </main>
 
-      <footer className="py-12 border-t border-slate-50">
-        <div className="max-w-7xl mx-auto px-6 flex justify-between items-center text-xs text-slate-300 font-medium uppercase tracking-widest">
+      <footer className="py-8 md:py-12 border-t border-slate-50">
+        <div className="max-w-7xl mx-auto px-6 flex justify-between items-center text-[10px] text-slate-300 font-medium uppercase tracking-widest">
            <div>© {new Date().getFullYear()} gaimi rubi</div>
            <div>{t.footer}</div>
         </div>
@@ -199,50 +199,48 @@ const App: React.FC = () => {
       {/* PROFILE MODAL */}
       {showProfile && user && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 relative">
-                  <button onClick={() => setShowProfile(false)} className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600"><X size={20}/></button>
-                  <div className="p-8 border-b border-slate-100">
-                      <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden animate-in zoom-in-95 relative flex flex-col">
+                  <button onClick={() => setShowProfile(false)} className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 z-10"><X size={20}/></button>
+                  <div className="p-6 md:p-8 border-b border-slate-100 flex-shrink-0">
+                      <h2 className="text-xl md:text-2xl font-black text-slate-800 flex items-center gap-2">
                           <UserIcon className="text-red-500" /> {user.user_metadata?.full_name || 'Jogador'}
                       </h2>
-                      <p className="text-slate-400 text-sm">{user.email}</p>
+                      <p className="text-slate-400 text-xs md:text-sm truncate">{user.email}</p>
                       
-                      {/* USER ID DISPLAY FOR ADMINS */}
                       <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between group">
                           <div className="overflow-hidden">
-                              <div className="text-[10px] font-bold text-slate-400 uppercase mb-0.5">ID de Usuário (UUID)</div>
-                              <div className="text-[11px] font-mono text-slate-500 truncate">{user.id}</div>
+                              <div className="text-[8px] md:text-[10px] font-bold text-slate-400 uppercase mb-0.5">ID de Usuário (UUID)</div>
+                              <div className="text-[10px] md:text-[11px] font-mono text-slate-500 truncate pr-4">{user.id}</div>
                           </div>
                           <button 
                             onClick={() => copyToClipboard(user.id)}
-                            className={`p-2 rounded-lg transition-all ${copiedId ? 'bg-green-500 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-100 shadow-sm'}`}
+                            className={`p-1.5 md:p-2 rounded-lg transition-all flex-shrink-0 ${copiedId ? 'bg-green-500 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-100 shadow-sm'}`}
                             title="Copiar ID"
                           >
-                            {copiedId ? <CheckCircle2 size={16} /> : <Copy size={16} />}
+                            {copiedId ? <CheckCircle2 size={14} /> : <Copy size={14} />}
                           </button>
                       </div>
 
-                      {isVip && <div className="mt-4 inline-block px-3 py-1 bg-yellow-100 text-yellow-700 font-bold text-xs rounded-full">VIP MEMBER</div>}
+                      {isVip && <div className="mt-4 inline-block px-3 py-1 bg-yellow-100 text-yellow-700 font-bold text-[10px] md:text-xs rounded-full">VIP MEMBER</div>}
                   </div>
-                  <div className="p-8 bg-slate-50 max-h-[40vh] overflow-y-auto">
-                      <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Trophy size={16}/> {t.achievements}</h3>
+                  <div className="p-4 md:p-8 bg-slate-50 overflow-y-auto flex-1">
+                      <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm md:text-base"><Trophy size={14}/> {t.achievements}</h3>
                       <div className="space-y-3">
                           {ACHIEVEMENTS_LIST.map(ach => {
                               const unlocked = myAchievements.includes(ach.id);
                               return (
-                                  <div key={ach.id} className={`p-4 rounded-xl border flex items-center gap-4 ${unlocked ? 'bg-white border-green-200 shadow-sm' : 'bg-slate-100 border-slate-200 opacity-60'}`}>
-                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xl ${unlocked ? 'bg-green-100' : 'bg-slate-200 grayscale'}`}>
+                                  <div key={ach.id} className={`p-3 md:p-4 rounded-xl border flex items-center gap-3 md:gap-4 ${unlocked ? 'bg-white border-green-200 shadow-sm' : 'bg-slate-100 border-slate-200 opacity-60'}`}>
+                                      <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center text-lg md:text-xl flex-shrink-0 ${unlocked ? 'bg-green-100' : 'bg-slate-200 grayscale'}`}>
                                           {ach.icon}
                                       </div>
                                       <div>
-                                          <div className={`font-bold text-sm ${unlocked ? 'text-slate-800' : 'text-slate-500'}`}>{ach.title}</div>
-                                          <div className="text-xs text-slate-400">{ach.description}</div>
-                                          {unlocked && ach.reward && <div className="text-[10px] font-bold text-blue-500 mt-1 uppercase">Recompensa: {ach.reward}</div>}
+                                          <div className={`font-bold text-xs md:text-sm ${unlocked ? 'text-slate-800' : 'text-slate-500'}`}>{ach.title}</div>
+                                          <div className="text-[10px] md:text-xs text-slate-400">{ach.description}</div>
+                                          {unlocked && ach.reward && <div className="text-[9px] md:text-[10px] font-bold text-blue-500 mt-0.5 md:mt-1 uppercase">Recompensa: {ach.reward}</div>}
                                       </div>
                                   </div>
                               );
                           })}
-                          {ACHIEVEMENTS_LIST.length === 0 && <p className="text-slate-400 text-sm italic">Nenhuma conquista disponível.</p>}
                       </div>
                   </div>
               </div>
@@ -252,28 +250,28 @@ const App: React.FC = () => {
       {/* VIP Modal */}
       {showVipModal && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 relative">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in zoom-in-95 relative">
                   <button onClick={() => setShowVipModal(false)} className="absolute top-4 right-4 p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors text-slate-400">
-                      <X size={20} />
+                      <X size={18} />
                   </button>
                   
-                  <div className="p-8 text-center bg-slate-900 text-white">
-                      <div className="w-16 h-16 bg-yellow-400 rounded-full flex items-center justify-center mx-auto mb-4 text-black shadow-[0_0_20px_rgba(250,204,21,0.5)]">
-                          <Crown size={32} fill="currentColor" />
+                  <div className="p-6 md:p-8 text-center bg-slate-900 text-white">
+                      <div className="w-12 h-12 md:w-16 md:h-16 bg-yellow-400 rounded-full flex items-center justify-center mx-auto mb-4 text-black shadow-[0_0_20px_rgba(250,204,21,0.5)]">
+                          <Crown size={24} md:size={32} fill="currentColor" />
                       </div>
-                      <h2 className="text-2xl font-black tracking-tight mb-2">{t.vipModalTitle}</h2>
-                      <p className="text-slate-400 text-sm">{t.vipModalSubtitle}</p>
+                      <h2 className="text-xl md:text-2xl font-black tracking-tight mb-2">{t.vipModalTitle}</h2>
+                      <p className="text-slate-400 text-xs md:text-sm">{t.vipModalSubtitle}</p>
                   </div>
 
-                  <div className="p-8 space-y-4">
+                  <div className="p-6 md:p-8 space-y-4">
                       {t.perks.map((perk, i) => (
-                          <div key={i} className="flex gap-4 items-start">
-                              <div className="mt-1 p-1 bg-green-100 text-green-600 rounded-full">
-                                  <Check size={12} strokeWidth={4} />
+                          <div key={i} className="flex gap-3 md:gap-4 items-start">
+                              <div className="mt-1 p-1 bg-green-100 text-green-600 rounded-full flex-shrink-0">
+                                  <Check size={10} md:size={12} strokeWidth={4} />
                               </div>
                               <div>
-                                  <h3 className="font-bold text-slate-800">{perk.title}</h3>
-                                  <p className="text-xs text-slate-400">{perk.desc}</p>
+                                  <h3 className="font-bold text-sm md:text-base text-slate-800">{perk.title}</h3>
+                                  <p className="text-[10px] md:text-xs text-slate-400">{perk.desc}</p>
                               </div>
                           </div>
                       ))}
@@ -281,7 +279,7 @@ const App: React.FC = () => {
 
                   <div className="p-6 border-t border-slate-100 bg-slate-50">
                       <button disabled className="w-full py-4 bg-slate-200 text-slate-500 font-bold rounded-xl cursor-not-allowed flex flex-col items-center leading-none gap-1">
-                          <span className="text-sm uppercase tracking-wider">{lang === 'pt' ? 'EM BREVE' : 'COMING SOON'}</span>
+                          <span className="text-[10px] md:text-sm uppercase tracking-wider">{lang === 'pt' ? 'EM BREVE' : 'COMING SOON'}</span>
                       </button>
                   </div>
               </div>
