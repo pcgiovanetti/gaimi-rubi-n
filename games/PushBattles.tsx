@@ -106,7 +106,9 @@ const PB_TEXTS = {
         cost: "Cost",
         play: "PLAY",
         guest: "GUEST",
-        loginReq: "Login Required"
+        loginReq: "Login Required",
+        reqPushes: "Need:",
+        reqBadge: "Need Badge:"
     },
     pt: {
         totalPushes: "TOTAL DE EMPURRÕES",
@@ -152,7 +154,9 @@ const PB_TEXTS = {
         cost: "Custo",
         play: "JOGAR",
         guest: "CONVIDADO",
-        loginReq: "Login Necessário"
+        loginReq: "Login Necessário",
+        reqPushes: "Precisa:",
+        reqBadge: "Badge:"
     }
 };
 
@@ -176,7 +180,7 @@ const ABILITIES: Record<string, any> = {
   // VIP
   OVERKILL: { type: 'PASSIVE', name: 'OVERKILL', desc: 'HK. Alcance curto. Auto-atk.', color: '#000000', icon: <Skull />, cooldown: 0, range: 35, force: 150.0, stun: 120, reqPoints: 999999, category: 'PUSH' },
   // BADGE
-  SPEEDRUNNER: { type: 'PASSIVE', name: 'Speedrunner', desc: 'Muito rápido, empurrão fraco.', color: '#0ea5e9', icon: <Zap />, cooldown: 0, reqPoints: 999999, category: 'BADGE', moveSpeed: 0.5, pushForceMult: 0.5 },
+  SPEEDRUNNER: { type: 'PASSIVE', name: 'Speedrunner', desc: 'Muito rápido, empurrão fraco.', color: '#0ea5e9', icon: <Zap />, cooldown: 0, reqPoints: 0, category: 'BADGE', moveSpeed: 0.5, pushForceMult: 0.5 },
   // ADMIN
   ADMIN_GOD: { type: 'PASSIVE', name: '[ADM] GOD', desc: 'Invencível + Speed.', color: '#fbbf24', icon: <Crown />, cooldown: 0, reqPoints: 999999, category: 'PUSH' },
   ADMIN_NUKE: { type: 'ACTIVE', name: '[ADM] NUKE', desc: 'Explode o mapa.', color: '#b91c1c', icon: <Bomb />, cooldown: 120, range: 2000, force: 200.0, stun: 300, reqPoints: 999999, category: 'PUSH' },
@@ -528,6 +532,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
               ent.skillAnim = 15;
               const config = ABILITIES[ent.ability] || ABILITIES.IMPACT;
               if (ent.ability === 'FLASH' || ent.ability === 'ADMIN_FLASH') spawnParticles(ent.x, ent.y, config.color, 15);
+              else if (ent.ability === 'ADMIN_NUKE') spawnParticles(ent.x, ent.y, '#b91c1c', 50);
               else {
                   const range = config.range || 100;
                   for(let i=0; i<8; i++) {
@@ -785,9 +790,29 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                     // Movement
                     if (e.isPlayer && gameState === 'PLAYING') {
                         const speed = e.moveSpeed;
-                        if (ref.keys.up) e.vy -= speed; if (ref.keys.down) e.vy += speed;
-                        if (ref.keys.left) e.vx -= speed; if (ref.keys.right) e.vx += speed;
-                        if (ref.joystick.active) { e.vx += (ref.joystick.dx / 50) * speed; e.vy += (ref.joystick.dy / 50) * speed; }
+                        let inputX = 0;
+                        let inputY = 0;
+                        if (ref.keys.up) inputY -= 1; 
+                        if (ref.keys.down) inputY += 1;
+                        if (ref.keys.left) inputX -= 1; 
+                        if (ref.keys.right) inputX += 1;
+                        
+                        if (ref.joystick.active) {
+                            inputX = ref.joystick.dx / 50;
+                            inputY = ref.joystick.dy / 50;
+                        }
+
+                        // Normalize diagonal movement
+                        if (inputX !== 0 || inputY !== 0) {
+                            const length = Math.sqrt(inputX*inputX + inputY*inputY);
+                            // Avoid division by zero and cap joystick magnitude at 1
+                            if (length > 1.0 || (length > 0 && !ref.joystick.active)) {
+                                inputX /= length;
+                                inputY /= length;
+                            }
+                            e.vx += inputX * speed;
+                            e.vy += inputY * speed;
+                        }
                     } else if (!e.isPlayer) {
                         // BOT AI
                         const shouldRunAI = gameState === 'PLAYING' || (gameState === 'MENU_ABILITY' && gameMode === 'BOTS');
@@ -834,10 +859,49 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                 const config = ABILITIES[player.ability];
                 if (config.type === 'ACTIVE') {
                     player.skillCooldown = player.maxSkillCooldown; player.skillAnim = 15; player.invisible = false;
+                    
                     if (player.ability === 'DASH') { player.vx += Math.cos(player.facing)*10; player.vy += Math.sin(player.facing)*10; }
                     else if (player.ability === 'FLASH') { player.x += Math.cos(player.facing)*250; player.y += Math.sin(player.facing)*250; spawnParticles(player.x, player.y, config.color, 20); }
                     else if (player.ability === 'GHOST') { player.invisible = true; }
                     else if (player.ability === 'REPULSOR') { player.invulnerable = true; }
+                    else if (player.ability === 'IMPACT') {
+                         ref.entities.forEach(target => {
+                            if (target.id === player.id || target.dead) return;
+                            const dx = target.x - player.x; const dy = target.y - player.y;
+                            const dist = Math.sqrt(dx*dx + dy*dy);
+                            if (dist < config.range + target.radius) {
+                                if (target.invulnerable) return;
+                                const angle = Math.atan2(dy, dx);
+                                const force = config.force / (target.mass || 1.0);
+                                if (!target.isRemote) {
+                                    target.vx += Math.cos(angle) * force;
+                                    target.vy += Math.sin(angle) * force;
+                                    target.stunTimer = config.stun;
+                                    target.lastAttackerId = player.id;
+                                }
+                            }
+                         });
+                         spawnParticles(player.x, player.y, config.color, 30);
+                    }
+                    else if (player.ability === 'ADMIN_NUKE') {
+                         ref.entities.forEach(target => {
+                            if (target.id === player.id || target.dead) return;
+                            const dx = target.x - player.x; const dy = target.y - player.y;
+                            const dist = Math.sqrt(dx*dx + dy*dy);
+                            if (dist < config.range) {
+                                const angle = Math.atan2(dy, dx);
+                                const force = config.force / (target.mass || 1.0);
+                                if (!target.isRemote) {
+                                    target.vx += Math.cos(angle) * force;
+                                    target.vy += Math.sin(angle) * force;
+                                    target.stunTimer = config.stun;
+                                    target.lastAttackerId = player.id;
+                                }
+                            }
+                         });
+                         spawnParticles(player.x, player.y, '#b91c1c', 100);
+                    }
+
                     if (gameMode === 'ONLINE' && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'player_attack', payload: { id: player.id, type: 'SKILL' } });
                 }
             }
@@ -1096,16 +1160,39 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                           if ((data.category || 'PUSH') !== abilityTab) return null;
 
                           let isLocked = !isVip && careerPushes < data.reqPoints;
+                          // Unlock specific skills for guests
+                          if (!user && ['IMPACT', 'LEGO', 'DASH'].includes(key)) {
+                              isLocked = false;
+                          }
                           if (key === 'SPEEDRUNNER') isLocked = !unlockedAchievements.includes('pb_speedrunner');
                           if (key === 'OVERKILL') isLocked = !isVip && !isAdmin;
                           
+                          if (isAdmin) isLocked = false;
+
                           const isSelected = selectedAbility === key;
 
                           return (
-                              <button key={key} onClick={() => !isLocked && setSelectedAbility(key)} className={`relative aspect-square rounded-xl border-2 flex flex-col items-center justify-center gap-1 transition-all ${isSelected ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-white'} ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:border-slate-300'}`}>
-                                  {isLocked && <div className="absolute inset-0 bg-slate-100/50 backdrop-blur-[1px] flex items-center justify-center rounded-xl z-10"><Lock size={16} className="text-slate-400" /></div>}
+                              <button 
+                                key={key} 
+                                onClick={() => {
+                                    if (isLocked) {
+                                        if (data.category === 'BADGE') showNotification(`${t.reqBadge} ${data.name}`);
+                                        else if (key === 'OVERKILL') showNotification("Apenas VIP/Admin!");
+                                        else showNotification(`${t.reqPushes} ${data.reqPoints}`);
+                                    } else {
+                                        setSelectedAbility(key);
+                                    }
+                                }} 
+                                className={`relative aspect-square rounded-xl border-2 flex flex-col items-center justify-center gap-1 transition-all ${isSelected ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-white'} ${isLocked ? 'grayscale opacity-80' : 'hover:border-slate-300'}`}
+                              >
+                                  {isLocked && <div className="absolute top-1 right-1 bg-white rounded-full p-0.5 z-10 shadow-sm"><Lock size={10} className="text-slate-400" /></div>}
                                   <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs" style={{ backgroundColor: data.color }}>{data.icon}</div>
                                   <div className="text-[10px] font-bold text-slate-700 truncate w-full text-center px-1">{data.name}</div>
+                                  {isLocked && (
+                                    <div className="text-[9px] font-bold text-red-500 truncate w-full text-center px-0.5 leading-none">
+                                        {key === 'OVERKILL' ? 'VIP' : data.category === 'BADGE' ? 'BADGE' : data.reqPoints}
+                                    </div>
+                                  )}
                               </button>
                           );
                       })}
@@ -1209,6 +1296,13 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             <div className="absolute bottom-12 right-12 w-32 h-32 rounded-full bg-red-500/20 border-4 border-red-500/50 flex items-center justify-center pointer-events-none"><div className="text-red-500/50 font-black text-sm">{t.atk}</div></div>
             <div className="absolute bottom-48 right-12 w-20 h-20 rounded-full bg-blue-500/20 border-4 border-blue-500/50 flex items-center justify-center pointer-events-none"><div className="text-blue-500/50 font-black text-xs text-center leading-tight">SKILL<br/>(E)</div></div>
           </>
+      )}
+
+      {/* GLOBAL NOTIFICATION TOAST */}
+      {notification && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-top-5 pointer-events-none whitespace-nowrap z-[100]">
+            {notification}
+        </div>
       )}
     </div>
   );
