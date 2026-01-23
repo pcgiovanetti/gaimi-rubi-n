@@ -24,13 +24,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, currentPushes, onUpdat
         }
     };
 
-    const handleUpdateMyPushes = async (val: string) => {
-        const num = parseInt(val);
-        if (isNaN(num)) return;
-        onUpdatePushes(num);
-        await supabase.from('profiles').update({ total_pushes: num }).eq('id', userId);
-    };
-
     return (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm">
             <div className="bg-slate-900 text-white p-6 rounded-xl w-full max-w-md border border-slate-700 shadow-2xl relative">
@@ -40,14 +33,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, currentPushes, onUpdat
                 </div>
 
                 <div className="space-y-6">
-                    <div>
-                        <label className="text-xs text-slate-400 font-bold uppercase block mb-2">Seus Pontos (Push Battles)</label>
-                        <input 
-                            type="number" 
-                            value={currentPushes} 
-                            onChange={(e) => handleUpdateMyPushes(e.target.value)}
-                            className="w-full bg-slate-800 border border-slate-700 p-3 rounded-lg text-white font-mono"
-                        />
+                    <div className="p-4 bg-slate-800 rounded-lg text-sm text-slate-400">
+                        A edição de pontos (Pushes) foi movida para dentro do menu de configurações do jogo <strong>Push Battles</strong>.
                     </div>
 
                     <div>

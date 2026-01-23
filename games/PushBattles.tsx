@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Loader2, ShieldAlert, Trophy, Box, Ghost, Anchor, RefreshCw, Link, MousePointer2, Gem, Skull, Bomb, Infinity, TestTube, Flag, MessageSquareWarning, Palette, Check, Triangle, Crown } from 'lucide-react';
+import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Loader2, ShieldAlert, Trophy, Box, Ghost, Anchor, RefreshCw, Link, MousePointer2, Gem, Skull, Bomb, Infinity, TestTube, Flag, MessageSquareWarning, Palette, Check, Triangle, Crown, LogIn } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Language } from '../types';
 
@@ -104,7 +104,9 @@ const PB_TEXTS = {
         tabBadges: "BADGES",
         locked: "LOCKED",
         cost: "Cost",
-        play: "PLAY"
+        play: "PLAY",
+        guest: "GUEST",
+        loginReq: "Login Required"
     },
     pt: {
         totalPushes: "TOTAL DE EMPURRÕES",
@@ -148,7 +150,9 @@ const PB_TEXTS = {
         tabBadges: "CONQUISTAS",
         locked: "BLOQUEADO",
         cost: "Custo",
-        play: "JOGAR"
+        play: "JOGAR",
+        guest: "CONVIDADO",
+        loginReq: "Login Necessário"
     }
 };
 
@@ -242,6 +246,14 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                 await supabase.from('profiles').insert({ id: session.user.id, full_name: myNameRef.current, total_pushes: 0, is_vip: isUserAdmin });
                 setIsVip(isUserAdmin);
             }
+        } else {
+            // GUEST MODE
+            setUser(null);
+            setIsAdmin(false);
+            setIsVip(false);
+            setCareerPushes(0); // Guest starts at 0 every session
+            myIdRef.current = `guest-${Math.random().toString(36).substr(2,9)}`;
+            myNameRef.current = t.guest;
         }
         setLoadingProfile(false);
     };
@@ -254,13 +266,24 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
     if (savedTheme) setCurrentTheme(savedTheme as Theme);
 
     return () => { if (channelRef.current) supabase.removeChannel(channelRef.current); };
-  }, []);
+  }, [lang]);
 
   const saveProgress = async (sessionPushes: number) => {
-      if (!user) return;
+      // Always update local state so user sees progress during session
       const newTotal = careerPushes + sessionPushes;
       setCareerPushes(newTotal);
+
+      // Only save to DB if logged in
+      if (!user) return;
       await supabase.from('profiles').upsert({ id: user.id, total_pushes: newTotal, updated_at: new Date() });
+  };
+
+  const handleAdminUpdatePushes = async (val: string) => {
+      if (!isAdmin || !user) return;
+      const num = parseInt(val);
+      if (isNaN(num)) return;
+      setCareerPushes(num);
+      await supabase.from('profiles').update({ total_pushes: num }).eq('id', user.id);
   };
 
   const showNotification = (msg: string) => {
@@ -426,6 +449,8 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
   };
 
   const connectToRoom = async () => {
+      if (!user) return; // Guests cannot connect
+
       // Safety cleanup
       if (channelRef.current) await supabase.removeChannel(channelRef.current);
 
@@ -538,7 +563,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
     if (!ctx) return;
 
     // --- RESIZE OBSERVER FIX ---
-    // Instead of window.resize, we observe the container size to prevent cutoff
     const observer = new ResizeObserver((entries) => {
         for (let entry of entries) {
             if (entry.target === containerRef.current) {
@@ -557,7 +581,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         observer.observe(containerRef.current);
     }
 
-    // Controls logic same as before...
+    // Controls logic...
     const handleKeyDown = (e: KeyboardEvent) => {
         const k = gameRef.current.keys;
         if (e.code === 'KeyW' || e.code === 'ArrowUp') k.up = true;
@@ -585,9 +609,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMove);
 
-    // CRITICAL FIX: DO NOT call prepareBackground here unconditionaly.
-    // It wipes the state set by spawnPlayer or mode selection.
-
     // --- LOOP ---
     const loop = () => {
         update();
@@ -598,12 +619,11 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
     // UPDATE LOGIC
     const update = () => {
         const ref = gameRef.current;
-        // Fix for "cut off": if size is invalid, skip update logic to avoid NaN
         if (ref.width === 0 || ref.height === 0) return;
 
         const player = ref.entities.find(e => e.isPlayer);
         
-        // Only broadcast if Playing
+        // Broadcast
         if (gameState === 'PLAYING' && gameMode === 'ONLINE' && player && channelRef.current) {
             const now = Date.now();
             if (now - ref.lastBroadcast > 30) { 
@@ -625,10 +645,14 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             ref.survivalTime++;
             if (ref.survivalTime > 120 * 60) {
                  if (onUnlockAchievement) onUnlockAchievement('pb_speedrunner');
+                 // FORCE LOCAL UNLOCK so user can see it immediately without refresh
+                 if (!unlockedAchievements.includes('pb_speedrunner')) {
+                     setUnlockedAchievements(prev => [...prev, 'pb_speedrunner']);
+                 }
             }
         }
 
-        // Bots Respawn (Run this logic in BACKGROUND too if BOTS mode)
+        // Bots Respawn
         if (gameState === 'PLAYING' || (gameState === 'MENU_ABILITY' && gameMode === 'BOTS')) {
             ref.entities.forEach(e => {
                 if (e.dead && !e.isPlayer && !e.isRemote && e.respawnTimer) {
@@ -657,7 +681,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             if (!e.isRemote && e.maxPassiveTimer > 0) {
                 e.passiveTimer--;
                 if (e.passiveTimer <= 0) {
-                    // Trigger Passive (Lego/Blocky)
                     const config = ABILITIES[e.ability];
                     if (e.ability === 'LEGO' || e.ability === 'ADMIN_BLOCKY') {
                         spawnTrap(e.x, e.y, 'LEGO', e.id, config.color);
@@ -669,7 +692,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                 }
             }
             if (!e.isRemote && e.ability === 'SPIKES' && !e.invisible) {
-                 // Area effect spikes
                  ref.entities.forEach(target => {
                     if (target.id === e.id) return;
                     const dx = target.x - e.x; const dy = target.y - e.y;
@@ -684,7 +706,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                 });
             }
             if (!e.isRemote && e.ability === 'OVERKILL') {
-                 // Overkill passive aura
                  ref.entities.forEach(target => {
                       if (target.id === e.id || target.dead) return;
                       const dx = target.x - e.x; const dy = target.y - e.y;
@@ -769,9 +790,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                         if (ref.joystick.active) { e.vx += (ref.joystick.dx / 50) * speed; e.vy += (ref.joystick.dy / 50) * speed; }
                     } else if (!e.isPlayer) {
                         // BOT AI
-                        // Run Bot AI if playing OR if we are in Ability Menu (Background Mode) for BOTS
                         const shouldRunAI = gameState === 'PLAYING' || (gameState === 'MENU_ABILITY' && gameMode === 'BOTS');
-                        
                         if (shouldRunAI) {
                             let target = null; let minDist = 9999;
                             ref.entities.forEach(other => {
@@ -788,7 +807,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                                 if (Math.abs(angleDiff) > 0.1) e.facing += Math.sign(angleDiff) * 0.1; else e.facing = targetAngle;
                                 e.vx += Math.cos(e.facing) * e.moveSpeed; e.vy += Math.sin(e.facing) * e.moveSpeed;
                                 if (minDist < 80 && e.attackCooldown <= 0 && !e.isAttacking && Math.random() < 0.05) {
-                                    // Bot Attack
                                     if (e.ability !== 'OVERKILL') { e.isAttacking = true; e.attackTimer = ATTACK_DURATION; e.hitList = []; e.attackCooldown = e.maxAttackCooldown; }
                                 }
                             }
@@ -806,23 +824,20 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         
         ref.traps = ref.traps.filter(t => t.active);
 
-        // Player Input (Attack/Skill)
+        // Player Input
         if (player && !player.dead && player.stunTimer <= 0 && gameState === 'PLAYING') {
             if (ref.keys.attack && player.attackCooldown <= 0 && !player.isAttacking && player.ability !== 'OVERKILL') {
                 player.isAttacking = true; player.attackTimer = ATTACK_DURATION; player.hitList = []; player.attackCooldown = player.maxAttackCooldown; player.invisible = false;
                 if (gameMode === 'ONLINE' && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'player_attack', payload: { id: player.id, type: 'BASIC' } });
             }
             if (ref.keys.skill && player.skillCooldown <= 0) {
-                // Skill Logic
                 const config = ABILITIES[player.ability];
                 if (config.type === 'ACTIVE') {
                     player.skillCooldown = player.maxSkillCooldown; player.skillAnim = 15; player.invisible = false;
-                    // ... (Skill effects identical to before, kept concise here)
                     if (player.ability === 'DASH') { player.vx += Math.cos(player.facing)*10; player.vy += Math.sin(player.facing)*10; }
                     else if (player.ability === 'FLASH') { player.x += Math.cos(player.facing)*250; player.y += Math.sin(player.facing)*250; spawnParticles(player.x, player.y, config.color, 20); }
                     else if (player.ability === 'GHOST') { player.invisible = true; }
                     else if (player.ability === 'REPULSOR') { player.invulnerable = true; }
-                    // ... (Broadcast skill)
                     if (gameMode === 'ONLINE' && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'player_attack', payload: { id: player.id, type: 'SKILL' } });
                 }
             }
@@ -854,15 +869,12 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         ref.particles = ref.particles.filter(p => p.life > 0);
 
         if (player && !player.dead) { ref.camera.x += (player.x - ref.camera.x) * 0.1; ref.camera.y += (player.y - ref.camera.y) * 0.1; }
-        // Spectator cam logic for menu background
         else if (gameState !== 'PLAYING') {
-             // Slowly drift or follow a bot to make background alive
              const activeBot = ref.entities.find(e => !e.dead);
              if (activeBot) { 
                  ref.camera.x += (activeBot.x - ref.camera.x) * 0.05; 
                  ref.camera.y += (activeBot.y - ref.camera.y) * 0.05; 
              } else {
-                 // Drift to center if everyone dead
                  ref.camera.x += (0 - ref.camera.x) * 0.05;
                  ref.camera.y += (0 - ref.camera.y) * 0.05;
              }
@@ -881,15 +893,15 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         // --- THEME ---
         let floorColor = '#ffffff';
         let gridColor = '#e2e8f0';
-        let voidColor = '#f8fafc'; // For "outside" illusion handled by clearRect usually, but we draw rect over it
+        let voidColor = '#f8fafc'; 
         
         if (currentTheme === 'CLASSIC') {
-            floorColor = '#4ade80'; // Green
+            floorColor = '#4ade80'; 
             gridColor = '#86efac'; 
-            voidColor = '#60a5fa'; // Blue
+            voidColor = '#60a5fa'; 
         }
 
-        // Void (Background)
+        // Void
         ctx.save();
         ctx.resetTransform();
         ctx.fillStyle = voidColor;
@@ -909,7 +921,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         }
         ctx.restore();
 
-        // Entities & Particles (Same as before)
+        // Entities & Particles
         ref.traps.forEach(t => {
             ctx.fillStyle = t.color;
             if (t.type === 'LEGO') { ctx.fillRect(t.x-8, t.y-8, 16, 16); ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(t.x-8, t.y-8, 4, 4); }
@@ -922,7 +934,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             ctx.save(); ctx.translate(e.x, e.y);
             if (e.invisible) { if (e.isPlayer) ctx.globalAlpha = 0.5; else { ctx.restore(); return; } }
             
-            // Attack Range Indicator
             if (e.isAttacking) {
                 ctx.beginPath(); ctx.arc(0, 0, ATTACK_RADIUS + 5, 0, Math.PI * 2); 
                 ctx.fillStyle = 'rgba(239, 68, 68, 0.2)'; ctx.fill();
@@ -942,6 +953,13 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             ctx.save(); 
             if (e.isAdmin) ctx.fillStyle = '#ef4444'; else if (e.isVip) ctx.fillStyle = '#fbbf24'; else ctx.fillStyle = '#64748b'; 
             ctx.font = (e.isAdmin || e.isVip) ? 'bold 12px monospace' : 'bold 11px monospace'; 
+            
+            // GUEST LOGIC FOR NAME
+            if (e.isPlayer && !user) {
+                ctx.globalAlpha = 0.5;
+                ctx.fillStyle = '#94a3b8';
+            }
+
             ctx.textAlign = 'center'; ctx.fillText(e.name.toUpperCase(), 0, -e.radius - 12); 
             ctx.restore();
 
@@ -1002,13 +1020,12 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         observer.disconnect();
         cancelAnimationFrame(gameRef.current.animationId);
     };
-  }, [gameState, selectedAbility, gameMode, isConnected, onlineCount, user, careerPushes, isAdmin, notification, proAim, isVip, lang, currentTheme]);
+  }, [gameState, selectedAbility, gameMode, isConnected, onlineCount, user, careerPushes, isAdmin, notification, proAim, isVip, lang, currentTheme, unlockedAchievements]);
 
   // --- RENDERING MENUS ---
 
   return (
     <div ref={containerRef} className="w-full h-full relative font-mono select-none overflow-hidden bg-slate-50">
-      {/* Force canvas to take full container size via CSS, ResizeObserver handles resolution */}
       <canvas ref={canvasRef} className="block w-full h-full touch-none" style={{ width: '100%', height: '100%' }} />
       
       {/* 1. MAIN MENU (SELECT MODE) */}
@@ -1031,9 +1048,20 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                           <Users size={32} className="text-slate-400 group-hover:text-slate-800" />
                           <span className="font-bold text-slate-700">{t.trainBots}</span>
                       </button>
-                      <button onClick={() => { setGameMode('ONLINE'); prepareBackground('ONLINE'); setGameState('MENU_ABILITY'); }} className="p-6 bg-slate-50 border-2 border-slate-100 hover:border-green-300 rounded-2xl flex flex-col items-center gap-3 transition-all group">
-                          <Globe size={32} className="text-slate-400 group-hover:text-green-500" />
+                      
+                      <button 
+                        onClick={() => { 
+                            if (!user) return;
+                            setGameMode('ONLINE'); 
+                            prepareBackground('ONLINE'); 
+                            setGameState('MENU_ABILITY'); 
+                        }} 
+                        disabled={!user}
+                        className={`p-6 bg-slate-50 border-2 rounded-2xl flex flex-col items-center gap-3 transition-all group ${!user ? 'opacity-50 cursor-not-allowed border-slate-100' : 'border-slate-100 hover:border-green-300'}`}
+                      >
+                          {user ? <Globe size={32} className="text-slate-400 group-hover:text-green-500" /> : <Lock size={32} className="text-slate-300" />}
                           <span className="font-bold text-slate-700">{t.online}</span>
+                          {!user && <span className="text-[10px] text-red-500 font-bold uppercase">{t.loginReq}</span>}
                       </button>
                   </div>
                   {isVip && (
@@ -1048,7 +1076,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
       {/* 2. ABILITY SELECT (BACKGROUND ACTIVE) */}
       {gameState === 'MENU_ABILITY' && (
           <div className="absolute inset-0 flex items-end justify-center z-20 pointer-events-none">
-              {/* Improved Visibility: Transparent container so game logic (Bots/Online) is visible behind */}
               <div className="bg-white/90 backdrop-blur-xl w-full max-w-4xl p-6 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.1)] border-t border-slate-100 pointer-events-auto animate-in slide-in-from-bottom-10">
                   <div className="flex justify-between items-center mb-6">
                       <button onClick={() => { setGameState('MENU_HOME'); prepareBackground('MENU_HOME' as any); }} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200"><X size={18} /></button>
@@ -1128,6 +1155,18 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                                </button>
                            </div>
                        </div>
+                       
+                       {isAdmin && (
+                           <div className="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+                               <div className="text-xs font-bold text-yellow-500 uppercase mb-2 flex items-center gap-2"><Crown size={14} /> ADMIN PUSHES</div>
+                               <input 
+                                   type="number" 
+                                   value={careerPushes}
+                                   onChange={(e) => handleAdminUpdatePushes(e.target.value)}
+                                   className="w-full bg-slate-800 text-white p-2 rounded text-sm font-mono border border-slate-700"
+                               />
+                           </div>
+                       )}
                    </div>
                    <button onClick={() => setShowSettings(false)} className="w-full py-2 bg-slate-800 text-white rounded-lg font-bold text-sm">{t.close}</button>
                </div>
@@ -1153,7 +1192,11 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
               <div className="bg-white p-8 rounded-3xl shadow-2xl border border-slate-100 text-center animate-in zoom-in-95">
                   <h2 className="text-3xl font-black text-slate-800 mb-2">{t.gameOver}</h2>
                   <p className="text-slate-500 mb-6">{t.pointsRound} <span className="font-bold text-red-500">{gameRef.current.currentScore}</span></p>
-                  <div className="mb-6 p-4 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase">{t.careerTotal}</div><div className="text-2xl font-black text-slate-800">{careerPushes}</div></div>
+                  <div className="mb-6 p-4 bg-slate-50 rounded-xl">
+                      <div className="text-xs font-bold text-slate-400 uppercase">{t.careerTotal}</div>
+                      <div className="text-2xl font-black text-slate-800">{careerPushes}</div>
+                      {!user && <div className="text-[10px] text-red-400 mt-1 uppercase font-bold">(GUEST - NÃO SALVO)</div>}
+                  </div>
                   <button onClick={() => setGameState('MENU_HOME')} className="px-8 py-3 bg-slate-800 text-white font-bold rounded-xl w-full">{t.backLobby}</button>
               </div>
           </div>
