@@ -855,6 +855,9 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                                 if (!target.invulnerable) {
                                     target.dead = true; target.lastAttackerId = e.id;
                                     spawnParticles(target.x, target.y, target.color, 20);
+                                    if (!target.isPlayer && !target.isRemote && gameMode === 'BOTS') {
+                                        target.respawnTimer = 60; // FIX: Respawn logic for hit kills
+                                    }
                                     return;
                                 }
                             }
@@ -995,12 +998,20 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                 spawnParticles(e.x, e.y, e.color, 20);
                 if (e.isPlayer) {
                     if (gameMode === 'ONLINE' && channelRef.current && e.lastAttackerId) channelRef.current.send({ type: 'broadcast', event: 'player_killed', payload: { killedBy: e.lastAttackerId, victimName: e.name } });
-                    saveProgress(ref.currentScore);
+                    
+                    // FIX: Only save progress if NOT in test mode
+                    if (gameMode !== 'TEST') {
+                        saveProgress(ref.currentScore);
+                    }
+                    
                     setTimeout(() => setGameState('GAMEOVER'), 1000);
                 } else if (!e.isRemote) {
                     if (e.lastAttackerId === myIdRef.current) {
                         ref.currentScore += 5;
-                        if (ref.currentScore > highScore) { setHighScore(ref.currentScore); localStorage.setItem('pushBattlesHigh', ref.currentScore.toString()); }
+                        // FIX: Only update local high score if NOT in test mode
+                        if (gameMode !== 'TEST') {
+                            if (ref.currentScore > highScore) { setHighScore(ref.currentScore); localStorage.setItem('pushBattlesHigh', ref.currentScore.toString()); }
+                        }
                     }
                     if (gameMode === 'BOTS') e.respawnTimer = 600 + Math.floor(Math.random() * 1200);
                     else if (gameMode === 'TEST') e.respawnTimer = 60;
@@ -1018,6 +1029,65 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         }
     };
 
+    const drawCooldownCircle = (ctx: CanvasRenderingContext2D, x: number, y: number, r: number, progress: number, color: string, label: string, keyName: string) => {
+        const isReady = progress >= 1;
+        
+        ctx.save();
+        
+        // Glow effect when ready
+        if (isReady) {
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = color;
+        }
+
+        // Background
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+        ctx.fill();
+        ctx.shadowBlur = 0; // Reset shadow
+
+        // Progress Arc (Cooldown overlay)
+        if (!isReady) {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            // Draw cooldown pie slice
+            ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * (1 - progress)));
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fill();
+        }
+
+        // Border Ring
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = isReady ? color : '#475569';
+        ctx.lineWidth = isReady ? 3 : 2;
+        ctx.stroke();
+
+        // Inner Circle (Button look)
+        ctx.beginPath();
+        ctx.arc(x, y, r - 5, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Label
+        ctx.fillStyle = isReady ? '#ffffff' : '#94a3b8';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x, y - 2);
+        
+        // Keybind Text
+        if (!isMobile) {
+            ctx.fillStyle = '#64748b';
+            ctx.font = 'bold 10px monospace';
+            ctx.fillText(keyName, x, y + 12);
+        }
+
+        ctx.restore();
+    };
+
     const draw = (ctx: CanvasRenderingContext2D) => {
         const ref = gameRef.current;
         const { width, height, camera } = ref;
@@ -1027,7 +1097,6 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         
         // --- ZOOM LOGIC ---
         // Se a largura for menor que 768px (mobile/tablet), aplicamos zoom out
-        // Valor base 1.0 (PC), reduz para ~0.65 em celulares pequenos
         let zoom = 1.0;
         if (width < 768) {
             zoom = Math.max(0.65, width / 1000); 
@@ -1043,10 +1112,8 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         if (ref.timeStopTimer > 0) { voidColor = '#1e293b'; floorColor = '#334155'; gridColor = '#475569'; }
 
         // Background (Infinite Void)
-        // Precisamos desenhar um retângulo grande o suficiente para cobrir a tela mesmo com zoom out
         ctx.save(); 
         ctx.fillStyle = voidColor;
-        // Inverte a transformação para desenhar o fundo estático ou relativo
         ctx.translate(camera.x, camera.y); 
         ctx.scale(1/zoom, 1/zoom);
         ctx.translate(-width/2, -height/2);
@@ -1102,22 +1169,20 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         if (gameState === 'PLAYING') {
             const player = ref.entities.find(e => e.isPlayer);
             if (player && !player.dead) {
-                 const barW = 100; const barH = 8; const centerX = width / 2; const bottomY = height - 40;
                  const atkPct = Math.max(0, 1 - (player.attackCooldown / player.maxAttackCooldown));
-                 ctx.fillStyle = '#1e293b'; ctx.fillRect(centerX - barW - 10, bottomY, barW, barH);
-                 ctx.fillStyle = atkPct === 1 ? '#ef4444' : '#64748b'; ctx.fillRect(centerX - barW - 10, bottomY, barW * atkPct, barH);
-                 ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'right'; ctx.fillText(t.push, centerX - 15, bottomY - 5);
+                 
+                 // Attack Button (Bottom Right)
+                 drawCooldownCircle(ctx, width - 60, height - 60, 30, atkPct, '#ef4444', 'ATK', 'SPACE');
 
                  const config = ABILITIES[player.ability];
                  if (config.type === 'ACTIVE') {
                      const skillPct = Math.max(0, 1 - (player.skillCooldown / player.maxSkillCooldown));
-                     ctx.fillStyle = '#1e293b'; ctx.fillRect(centerX + 10, bottomY, barW, barH);
-                     ctx.fillStyle = skillPct === 1 ? player.color : '#64748b'; ctx.fillRect(centerX + 10, bottomY, barW * skillPct, barH);
-                     ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.fillText(t.skill, centerX + 15, bottomY - 5);
+                     // Skill Button (Left of Attack)
+                     drawCooldownCircle(ctx, width - 130, height - 60, 25, skillPct, player.color, 'SKILL', 'E');
                  }
                  
                  if (gameMode === 'BOTS') {
-                     ctx.fillStyle = '#64748b'; ctx.font = '10px monospace'; ctx.textAlign = 'center'; ctx.fillText(`${Math.floor(ref.survivalTime / 60)}s`, centerX, bottomY + 20);
+                     ctx.fillStyle = '#64748b'; ctx.font = '10px monospace'; ctx.textAlign = 'center'; ctx.fillText(`${Math.floor(ref.survivalTime / 60)}s`, width / 2, height - 20);
                  }
             }
             ctx.fillStyle = '#0f172a'; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'left'; ctx.fillText(`${t.points}: ${ref.currentScore}`, 20, 40);
