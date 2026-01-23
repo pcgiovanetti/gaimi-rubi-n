@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Loader2, ShieldAlert, Trophy, Box, Ghost, Anchor, RefreshCw, Link, MousePointer2, Gem, Skull, Bomb, Infinity, TestTube, Flag, MessageSquareWarning, Palette, Check, Triangle, Crown, LogIn } from 'lucide-react';
+import { Settings, X, Zap, Target, Globe, Users, Lock, Wind, Loader2, ShieldAlert, Trophy, Box, Ghost, Anchor, RefreshCw, Link, MousePointer2, Gem, Skull, Bomb, Infinity, TestTube, Flag, MessageSquareWarning, Palette, Check, Triangle, Crown, LogIn, Flame, Bug, Clock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Language } from '../types';
 
@@ -15,6 +15,20 @@ interface Trap {
     type: 'LEGO' | 'MINE' | 'BLACKHOLE';
     color: string;
     active: boolean;
+    life: number; // Lifetime in frames
+}
+
+interface Projectile {
+    id: string;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    radius: number;
+    ownerId: string;
+    color: string;
+    life: number;
+    speed: number;
 }
 
 interface Entity {
@@ -51,14 +65,18 @@ interface Entity {
   stunTimer: number; 
   skillAnim: number;
   respawnTimer?: number;
+  // New props for complex abilities
+  burstCount?: number;
+  burstTimer?: number;
 }
 
 const ARENA_RADIUS = 1000; 
 const PLAYER_RADIUS = 20;
-const FRICTION = 0.92;
-const ATTACK_DURATION = 12; // Reduced to ~0.2s at 60fps
+// PHYSICS FIX: Increased friction (lower number = more friction) and increased move speed to compensate
+const FRICTION = 0.85; 
+const ATTACK_DURATION = 12; 
 const ATTACK_RADIUS = 45;
-const PUSH_FORCE = 22.0;
+const PUSH_FORCE = 60.0; // Increased significantly to throw further
 
 // --- TRANSLATIONS ---
 const PB_TEXTS = {
@@ -108,7 +126,11 @@ const PB_TEXTS = {
         guest: "GUEST",
         loginReq: "Login Required",
         reqPushes: "Need:",
-        reqBadge: "Need Badge:"
+        reqBadge: "Need Badge:",
+        timeStop: "TIME STOPPED!",
+        youKilled: "YOU KNOCKED OUT",
+        onlyVip: "VIP/Admin Only!",
+        reportSent: "Report sent successfully!"
     },
     pt: {
         totalPushes: "TOTAL DE EMPURRÕES",
@@ -156,34 +178,129 @@ const PB_TEXTS = {
         guest: "CONVIDADO",
         loginReq: "Login Necessário",
         reqPushes: "Precisa:",
-        reqBadge: "Badge:"
+        reqBadge: "Badge:",
+        timeStop: "TEMPO PARADO!",
+        youKilled: "VOCÊ DERRUBOU",
+        onlyVip: "Apenas VIP/Admin!",
+        reportSent: "Report enviado com sucesso!"
     }
 };
 
 // --- ABILITIES CONFIGURATION ---
 const ABILITIES: Record<string, any> = {
   // STARTER
-  IMPACT: { type: 'ACTIVE', name: 'Impacto', desc: 'Empurrão leve em área.', color: '#3b82f6', icon: <Target />, cooldown: 180, range: 140, force: 18.0, stun: 45, reqPoints: 0, category: 'PUSH' },
+  IMPACT: {
+      type: 'ACTIVE',
+      name: { en: 'Impact', pt: 'Impacto' },
+      desc: { en: 'Light area push.', pt: 'Empurrão leve em área.' },
+      color: '#3b82f6', icon: <Target />, cooldown: 180, range: 140, force: 45.0, stun: 45, reqPoints: 0, category: 'PUSH'
+  },
   // TIER 1
-  LEGO: { type: 'PASSIVE', name: 'Lego', desc: 'Solta blocos no chão.', color: '#ef4444', icon: <Box />, cooldown: 0, passiveCooldown: 240, range: 0, reqPoints: 50, category: 'PUSH' },
-  DASH: { type: 'ACTIVE', name: 'Dash', desc: 'Aceleração explosiva.', color: '#f59e0b', icon: <Wind />, cooldown: 120, range: 0, force: 20.0, stun: 30, reqPoints: 100, category: 'PUSH' },
+  LEGO: {
+      type: 'ACTIVE',
+      name: { en: 'Lego', pt: 'Lego' },
+      desc: { en: 'Place a trap for 20s.', pt: 'Cria uma armadilha por 20s.' },
+      color: '#ef4444', icon: <Box />, cooldown: 120, range: 0, reqPoints: 50, category: 'PUSH'
+  },
+  DASH: {
+      type: 'ACTIVE',
+      name: { en: 'Dash', pt: 'Dash' },
+      desc: { en: 'Explosive acceleration.', pt: 'Aceleração explosiva.' },
+      color: '#f59e0b', icon: <Wind />, cooldown: 120, range: 0, force: 50.0, stun: 30, reqPoints: 100, category: 'PUSH'
+  },
   // TIER 2
-  SPIKES: { type: 'PASSIVE', name: 'Espinhos', desc: 'Dano ao contato.', color: '#64748b', icon: <Triangle />, cooldown: 0, passiveCooldown: 60, range: 40, force: 15.0, stun: 10, reqPoints: 200, category: 'PUSH' },
-  FLASH: { type: 'ACTIVE', name: 'Flash', desc: 'Teleporte instantâneo.', color: '#ec4899', icon: <Zap />, cooldown: 200, range: 250, force: 0, stun: 0, reqPoints: 300, category: 'PUSH' },
+  SPIKES: {
+      type: 'PASSIVE',
+      name: { en: 'Spikes', pt: 'Espinhos' },
+      desc: { en: 'Damage on contact.', pt: 'Dano ao contato.' },
+      color: '#64748b', icon: <Triangle />, cooldown: 0, passiveCooldown: 60, range: 40, force: 35.0, stun: 10, reqPoints: 200, category: 'PUSH'
+  },
+  FLASH: {
+      type: 'ACTIVE',
+      name: { en: 'Flash', pt: 'Flash' },
+      desc: { en: 'Instant teleport.', pt: 'Teleporte instantâneo.' },
+      color: '#ec4899', icon: <Zap />, cooldown: 200, range: 250, force: 0, stun: 0, reqPoints: 300, category: 'PUSH'
+  },
   // TIER 3
-  HOOK: { type: 'ACTIVE', name: 'Gancho', desc: 'Puxa inimigo (Nerfado).', color: '#d97706', icon: <Link />, cooldown: 300, range: 350, force: -12.0, stun: 30, reqPoints: 500, category: 'PUSH' },
-  GHOST: { type: 'ACTIVE', name: 'Fantasma', desc: 'Invisível e intangível.', color: '#cbd5e1', icon: <Ghost />, cooldown: 450, range: 0, force: 0, stun: 0, reqPoints: 750, category: 'PUSH' },
+  HOOK: {
+      type: 'ACTIVE',
+      name: { en: 'Hook', pt: 'Gancho' },
+      desc: { en: 'Pull enemy (Nerfed).', pt: 'Puxa inimigo (Nerfado).' },
+      color: '#d97706', icon: <Link />, cooldown: 300, range: 350, force: -30.0, stun: 30, reqPoints: 500, category: 'PUSH'
+  },
+  GHOST: {
+      type: 'ACTIVE',
+      name: { en: 'Ghost', pt: 'Fantasma' },
+      desc: { en: 'Invisible and intangible.', pt: 'Invisível e intangível.' },
+      color: '#cbd5e1', icon: <Ghost />, cooldown: 450, range: 0, force: 0, stun: 0, reqPoints: 750, category: 'PUSH'
+  },
   // TIER 4
-  SWAP: { type: 'ACTIVE', name: 'Troca', desc: 'Troca de lugar com inimigo.', color: '#8b5cf6', icon: <RefreshCw />, cooldown: 600, range: 500, force: 0, stun: 20, reqPoints: 1000, category: 'PUSH' },
-  REPULSOR: { type: 'ACTIVE', name: 'Repulsor', desc: 'Reflete ataques por 2s.', color: '#10b981', icon: <ShieldAlert />, cooldown: 400, range: 0, force: 0, stun: 0, reqPoints: 1500, category: 'PUSH' },
-  MASS: { type: 'PASSIVE', name: 'Colosso', desc: 'Imune a empurrões leves.', color: '#1e293b', icon: <Anchor />, cooldown: 0, reqPoints: 2000, category: 'PUSH' },
+  SWAP: {
+      type: 'ACTIVE',
+      name: { en: 'Swap', pt: 'Troca' },
+      desc: { en: 'Swap places with enemy.', pt: 'Troca de lugar com inimigo.' },
+      color: '#8b5cf6', icon: <RefreshCw />, cooldown: 600, range: 500, force: 0, stun: 20, reqPoints: 1000, category: 'PUSH'
+  },
+  REPULSOR: {
+      type: 'ACTIVE',
+      name: { en: 'Repulsor', pt: 'Repulsor' },
+      desc: { en: 'Reflect attacks for 2s.', pt: 'Reflete ataques por 2s.' },
+      color: '#10b981', icon: <ShieldAlert />, cooldown: 400, range: 0, force: 0, stun: 0, reqPoints: 1500, category: 'PUSH'
+  },
+  MASS: {
+      type: 'PASSIVE',
+      name: { en: 'Colossus', pt: 'Colosso' },
+      desc: { en: 'Immune to light pushes.', pt: 'Imune a empurrões leves.' },
+      color: '#1e293b', icon: <Anchor />, cooldown: 0, reqPoints: 2000, category: 'PUSH'
+  },
+  
+  // HIGH TIERS
+  BOSS: {
+      type: 'ACTIVE',
+      name: { en: 'Boss', pt: 'Chefe' },
+      desc: { en: 'Launch 6 fireballs.', pt: 'Lança 6 bolas de fogo.' },
+      color: '#b91c1c', icon: <Flame />, cooldown: 480, range: 0, reqPoints: 10000, category: 'PUSH'
+  },
+  ERROR: {
+      type: 'PASSIVE',
+      name: { en: 'Error', pt: 'Error' },
+      desc: { en: 'One Hit Kill on push.', pt: 'HIT KILL no empurrão.' },
+      color: '#000000', icon: <Bug />, cooldown: 0, reqPoints: 15000, category: 'PUSH'
+  },
+  GOD: {
+      type: 'ACTIVE',
+      name: { en: 'God', pt: 'God' },
+      desc: { en: 'Hit Kill + Time Stop (5s).', pt: 'Hit Kill + Para o Tempo (5s).' },
+      color: '#fbbf24', icon: <Clock />, cooldown: 1800, range: 0, reqPoints: 20000, category: 'PUSH'
+  },
+
   // VIP
-  OVERKILL: { type: 'PASSIVE', name: 'OVERKILL', desc: 'HK. Alcance curto. Auto-atk.', color: '#000000', icon: <Skull />, cooldown: 0, range: 35, force: 150.0, stun: 120, reqPoints: 999999, category: 'PUSH' },
+  OVERKILL: {
+      type: 'PASSIVE',
+      name: { en: 'OVERKILL', pt: 'OVERKILL' },
+      desc: { en: 'HK. Short range. Auto-atk.', pt: 'HK. Alcance curto. Auto-atk.' },
+      color: '#000000', icon: <Skull />, cooldown: 0, range: 35, force: 250.0, stun: 120, reqPoints: 999999, category: 'PUSH'
+  },
   // BADGE
-  SPEEDRUNNER: { type: 'PASSIVE', name: 'Speedrunner', desc: 'Muito rápido, empurrão fraco.', color: '#0ea5e9', icon: <Zap />, cooldown: 0, reqPoints: 0, category: 'BADGE', moveSpeed: 0.5, pushForceMult: 0.5 },
+  SPEEDRUNNER: {
+      type: 'PASSIVE',
+      name: { en: 'Speedrunner', pt: 'Speedrunner' },
+      desc: { en: 'Very fast, weak push.', pt: 'Muito rápido, empurrão fraco.' },
+      color: '#0ea5e9', icon: <Zap />, cooldown: 0, reqPoints: 0, category: 'BADGE', moveSpeed: 0.8, pushForceMult: 0.5
+  },
   // ADMIN
-  ADMIN_GOD: { type: 'PASSIVE', name: '[ADM] GOD', desc: 'Invencível + Speed.', color: '#fbbf24', icon: <Crown />, cooldown: 0, reqPoints: 999999, category: 'PUSH' },
-  ADMIN_NUKE: { type: 'ACTIVE', name: '[ADM] NUKE', desc: 'Explode o mapa.', color: '#b91c1c', icon: <Bomb />, cooldown: 120, range: 2000, force: 200.0, stun: 300, reqPoints: 999999, category: 'PUSH' },
+  ADMIN_GOD: {
+      type: 'PASSIVE',
+      name: { en: '[ADM] GOD', pt: '[ADM] GOD' },
+      desc: { en: 'Invincible + Speed.', pt: 'Invencível + Speed.' },
+      color: '#fbbf24', icon: <Crown />, cooldown: 0, reqPoints: 999999, category: 'PUSH'
+  },
+  ADMIN_NUKE: {
+      type: 'ACTIVE',
+      name: { en: '[ADM] NUKE', pt: '[ADM] NUKE' },
+      desc: { en: 'Explode the map.', pt: 'Explode o mapa.' },
+      color: '#b91c1c', icon: <Bomb />, cooldown: 120, range: 2000, force: 300.0, stun: 300, reqPoints: 999999, category: 'PUSH'
+  },
 };
 
 const BOT_NAMES = ["Bot Alpha", "Bot Beta", "Bot Gamma", "Bot Delta", "Bot Omega"];
@@ -308,7 +425,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
   };
 
   const submitReport = () => {
-      showNotification("Report enviado com sucesso!");
+      showNotification(t.reportSent);
       setShowReport(false);
       setReportDesc("");
   };
@@ -316,6 +433,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
   const gameRef = useRef({
     entities: [] as Entity[],
     traps: [] as Trap[],
+    projectiles: [] as Projectile[],
     particles: [] as any[],
     camera: { x: 0, y: 0 },
     keys: { up: false, down: false, left: false, right: false, attack: false, skill: false },
@@ -327,7 +445,9 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
     joystick: { active: false, x: 0, y: 0, dx: 0, dy: 0 },
     currentScore: 0,
     lastBroadcast: 0,
-    survivalTime: 0
+    survivalTime: 0,
+    timeStopTimer: 0,
+    timeStopOwnerId: null as string | null
   });
 
   useEffect(() => { gameRef.current.settings.proAim = proAim; }, [proAim]);
@@ -352,7 +472,8 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
           id: Math.random().toString(36),
           x, y, 
           radius: type === 'LEGO' ? 15 : (type === 'BLACKHOLE' ? 40 : 20),
-          type, ownerId, color, active: true
+          type, ownerId, color, active: true,
+          life: 1200 // 20 seconds at 60fps
       });
   };
 
@@ -365,7 +486,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
      return {
          id: `bot-${Math.random()}`, name: BOT_NAMES[index] || `Bot ${index}`, x: Math.cos(angle) * dist, y: Math.sin(angle) * dist,
          vx: 0, vy: 0, radius: PLAYER_RADIUS, color: config.color, isPlayer: false, isAdmin: false, isVip: false,
-         ability: randomAbility, moveSpeed: randomAbility === 'MASS' ? 0.22 : 0.25, mass: randomAbility === 'MASS' ? 2.5 : 1.0,
+         ability: randomAbility, moveSpeed: randomAbility === 'MASS' ? 0.45 : 0.55, mass: randomAbility === 'MASS' ? 2.5 : 1.0,
          invisible: false, invulnerable: false, isAttacking: false, attackTimer: 0, hitList: [], lastAttackerId: null,
          attackCooldown: 0, skillCooldown: 0, maxSkillCooldown: config.cooldown, maxAttackCooldown: 40,
          passiveTimer: config.passiveCooldown || 0, maxPassiveTimer: config.passiveCooldown || 0, dead: false,
@@ -377,6 +498,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
   const prepareBackground = async (mode: 'BOTS' | 'ONLINE' | 'TEST') => {
       gameRef.current.entities = [];
       gameRef.current.traps = [];
+      gameRef.current.projectiles = [];
       gameRef.current.particles = [];
       
       // Stop any existing subscriptions when changing modes
@@ -407,10 +529,12 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
 
   const spawnPlayer = () => {
       const abilityConfig = ABILITIES[selectedAbility] || ABILITIES.IMPACT;
-      let moveSpeed = 0.30;
-      if (selectedAbility === 'ADMIN_GOD') moveSpeed = 0.6;
-      else if (abilityConfig.name === 'Colosso') moveSpeed = 0.22;
-      else if (abilityConfig.moveSpeed) moveSpeed = abilityConfig.moveSpeed;
+      // Increased base move speed because friction is now higher (0.85 instead of 0.92)
+      // FIX: Adjusted to balance speed perception (0.9 was too fast, 0.25 was too slow for bots)
+      let moveSpeed = 0.65; 
+      if (selectedAbility === 'ADMIN_GOD' || selectedAbility === 'GOD') moveSpeed = 0.9;
+      else if (selectedAbility === 'MASS') moveSpeed = 0.45; // Check key
+      else if (selectedAbility === 'SPEEDRUNNER') moveSpeed = 0.95; // Speedrunner fixed value
 
       const playerEnt: Entity = {
           id: myIdRef.current,
@@ -425,15 +549,15 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
           isVip: isVip, 
           ability: selectedAbility,
           moveSpeed: moveSpeed, 
-          mass: selectedAbility === 'ADMIN_GOD' ? 100 : (abilityConfig.name === 'Colosso' ? 2.5 : 1.0),
+          mass: (selectedAbility === 'ADMIN_GOD' || selectedAbility === 'GOD') ? 100 : (selectedAbility === 'MASS' ? 2.5 : 1.0), // Check key
           invisible: false,
-          invulnerable: selectedAbility === 'ADMIN_GOD',
+          invulnerable: selectedAbility === 'ADMIN_GOD' || selectedAbility === 'GOD',
           isAttacking: false,
           attackTimer: 0,
           hitList: [],
           lastAttackerId: null,
           attackCooldown: 0,
-          skillCooldown: 0,
+          skillCooldown: selectedAbility === 'GOD' ? abilityConfig.cooldown : 0, // GOD starts on cooldown
           maxSkillCooldown: abilityConfig.cooldown || 0,
           maxAttackCooldown: selectedAbility === 'OVERKILL' ? 99999 : 40,
           passiveTimer: abilityConfig.passiveCooldown || 0,
@@ -449,6 +573,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
       gameRef.current.entities.push(playerEnt);
       gameRef.current.currentScore = 0;
       gameRef.current.survivalTime = 0;
+      gameRef.current.timeStopTimer = 0;
       setGameState('PLAYING');
   };
 
@@ -472,7 +597,11 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         .on('broadcast', { event: 'player_killed' }, ({ payload }) => {
             if (payload.killedBy === myIdRef.current) {
                 gameRef.current.currentScore += 5;
-                showNotification(`VOCÊ DERRUBOU ${payload.victimName}! +5 PTS`);
+                // Use default lang 'en' if not available in ref, but we don't have access to lang state inside callback easily without ref.
+                // Assuming t is available in scope or we hardcode specific message.
+                // Since this is inside the component, we can use `t` from scope BUT closure might be stale if t changes.
+                // However, notifications are transient. We'll use a specific message key.
+                showNotification(`${PB_TEXTS[lang].youKilled} ${payload.victimName}! +5 PTS`);
                 spawnParticles(gameRef.current.width/2, gameRef.current.height/2, '#fbbf24', 50);
             }
         })
@@ -549,7 +678,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
   const handleRemoteHit = (payload: any) => { /*...*/ 
       const me = gameRef.current.entities.find(e => e.isPlayer);
       if (me && me.id === payload.targetId && !me.dead) {
-          if (me.invulnerable) return;
+          if (me.invulnerable || me.stunTimer > 0) return; // Stun Immunity
           const resistance = me.mass || 1.0;
           const finalForce = payload.force / resistance;
           me.vx += Math.cos(payload.angle) * finalForce;
@@ -626,6 +755,12 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         const ref = gameRef.current;
         if (ref.width === 0 || ref.height === 0) return;
 
+        // TIME STOP LOGIC (Za Warudo)
+        if (ref.timeStopTimer > 0) {
+            ref.timeStopTimer--;
+            if (ref.timeStopTimer <= 0) ref.timeStopOwnerId = null;
+        }
+
         const player = ref.entities.find(e => e.isPlayer);
         
         // Broadcast
@@ -671,39 +806,84 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             });
         }
 
+        // Projectiles Update
+        ref.projectiles.forEach(p => {
+             // If time stopped and not owner, skip
+             if (ref.timeStopTimer > 0 && p.ownerId !== ref.timeStopOwnerId) return;
+             
+             p.x += p.vx;
+             p.y += p.vy;
+             p.life--;
+             // Projectile Collision
+             ref.entities.forEach(t => {
+                 if (t.id !== p.ownerId && !t.dead && !t.invisible && !t.invulnerable && t.stunTimer <= 0) { // Stun Immunity check
+                     const dx = t.x - p.x; const dy = t.y - p.y;
+                     if (Math.sqrt(dx*dx + dy*dy) < t.radius + p.radius) {
+                         p.life = 0;
+                         const angle = Math.atan2(p.vy, p.vx);
+                         const force = p.speed * 4.0; // Increased knockback for projectiles
+                         if (!t.isRemote) {
+                             t.vx += Math.cos(angle) * force;
+                             t.vy += Math.sin(angle) * force;
+                             t.stunTimer = 30;
+                             t.lastAttackerId = p.ownerId;
+                         }
+                         spawnParticles(p.x, p.y, p.color, 10);
+                     }
+                 }
+             });
+        });
+        ref.projectiles = ref.projectiles.filter(p => p.life > 0);
+
         // Entity Physics
         ref.entities.forEach(e => {
             if (e.dead) return;
 
-            // Timer reductions
+            // Timer reductions (Always run cooldowns)
             if (e.attackCooldown > 0) e.attackCooldown--;
             if (e.skillCooldown > 0) e.skillCooldown--;
             if (e.skillAnim > 0) e.skillAnim--; else e.hookTarget = undefined;
             if (e.invisible && e.skillCooldown <= e.maxSkillCooldown - 120) e.invisible = false;
             if (e.invulnerable && e.skillCooldown <= e.maxSkillCooldown - 120 && e.ability !== 'ADMIN_GOD') e.invulnerable = false;
             
-            // Passives
-            if (!e.isRemote && e.maxPassiveTimer > 0) {
-                e.passiveTimer--;
-                if (e.passiveTimer <= 0) {
-                    const config = ABILITIES[e.ability];
-                    if (e.ability === 'LEGO' || e.ability === 'ADMIN_BLOCKY') {
-                        spawnTrap(e.x, e.y, 'LEGO', e.id, config.color);
-                        if (gameMode === 'ONLINE' && channelRef.current && e.isPlayer) {
-                             channelRef.current.send({ type: 'broadcast', event: 'ability_trigger', payload: { type: 'LEGO', x: e.x, y: e.y, id: e.id, color: config.color } });
-                        }
-                    }
-                    e.passiveTimer = e.maxPassiveTimer;
+            // BURST LOGIC (For BOSS ability)
+            if (e.burstCount && e.burstCount > 0) {
+                if (!e.burstTimer) e.burstTimer = 0;
+                e.burstTimer--;
+                if (e.burstTimer <= 0) {
+                    // Fire Projectile
+                    const angle = e.facing + (Math.random() - 0.5) * 0.2;
+                    ref.projectiles.push({
+                        id: Math.random().toString(),
+                        x: e.x + Math.cos(angle) * 30,
+                        y: e.y + Math.sin(angle) * 30,
+                        vx: Math.cos(angle) * 12,
+                        vy: Math.sin(angle) * 12,
+                        radius: 8,
+                        ownerId: e.id,
+                        color: '#ef4444',
+                        life: 60,
+                        speed: 12
+                    });
+                    e.burstCount--;
+                    e.burstTimer = 10; // Delay between shots
                 }
             }
+
+            // --- TIME STOP FREEZE ---
+            if (ref.timeStopTimer > 0 && e.id !== ref.timeStopOwnerId) {
+                return; // Skip physics/movement for frozen entities
+            }
+
+            // Passives
             if (!e.isRemote && e.ability === 'SPIKES' && !e.invisible) {
                  ref.entities.forEach(target => {
                     if (target.id === e.id) return;
                     const dx = target.x - e.x; const dy = target.y - e.y;
                     const dist = Math.sqrt(dx*dx + dy*dy);
                     if (dist < 40 + target.radius) {
-                        if (target.id === e.id || target.dead || target.invisible || target.invulnerable) return;
-                        const res = target.mass || 1.0; const f = 15 / res;
+                        if (target.id === e.id || target.dead || target.invisible || target.invulnerable || target.stunTimer > 0) return;
+                        const res = target.mass || 1.0; const f = 35.0 / res;
                         const a = Math.atan2(dy, dx);
                         if (!target.isRemote) { target.vx += Math.cos(a)*f; target.vy += Math.sin(a)*f; target.stunTimer = 10; target.lastAttackerId = e.id; }
                         spawnParticles(target.x, target.y, target.color, 5);
@@ -717,7 +897,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                       const dist = Math.sqrt(dx*dx + dy*dy);
                       if (dist < ABILITIES.OVERKILL.range + target.radius) {
                           const angle = Math.atan2(dy, dx);
-                          if (!target.isRemote && !target.invulnerable) {
+                          if (!target.isRemote && !target.invulnerable && target.stunTimer <= 0) {
                               target.vx += Math.cos(angle) * (ABILITIES.OVERKILL.force/target.mass);
                               target.vy += Math.sin(angle) * (ABILITIES.OVERKILL.force/target.mass);
                               target.stunTimer = ABILITIES.OVERKILL.stun;
@@ -763,8 +943,19 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                             let force = PUSH_FORCE;
                             if (e.ability === 'SPEEDRUNNER') force = PUSH_FORCE * 0.5;
                             // Push Logic
-                            if (target.id === e.id || target.dead || target.invisible || target.invulnerable) return;
+                            if (target.id === e.id || target.dead || target.invisible || target.invulnerable || target.stunTimer > 0) return;
                             if (e.id === myIdRef.current && !target.dead) ref.currentScore += 1;
+                            
+                            // KILL ABILITIES CHECK (ERROR / GOD)
+                            if (e.ability === 'ERROR' || e.ability === 'GOD' || e.ability === 'ADMIN_GOD') {
+                                if (!target.invulnerable) {
+                                    target.dead = true;
+                                    target.lastAttackerId = e.id;
+                                    spawnParticles(target.x, target.y, target.color, 20);
+                                    return;
+                                }
+                            }
+
                             const f = force / (target.mass || 1.0);
                             const a = Math.atan2(dy, dx);
                             if (!target.isRemote) {
@@ -847,7 +1038,11 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             }
         });
         
-        ref.traps = ref.traps.filter(t => t.active);
+        // Trap Lifecycle
+        ref.traps.forEach(t => {
+            if (t.active) t.life--;
+        });
+        ref.traps = ref.traps.filter(t => t.active && t.life > 0);
 
         // Player Input
         if (player && !player.dead && player.stunTimer <= 0 && gameState === 'PLAYING') {
@@ -864,13 +1059,26 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                     else if (player.ability === 'FLASH') { player.x += Math.cos(player.facing)*250; player.y += Math.sin(player.facing)*250; spawnParticles(player.x, player.y, config.color, 20); }
                     else if (player.ability === 'GHOST') { player.invisible = true; }
                     else if (player.ability === 'REPULSOR') { player.invulnerable = true; }
+                    else if (player.ability === 'LEGO') { 
+                        spawnTrap(player.x, player.y, 'LEGO', player.id, config.color);
+                        if (gameMode === 'ONLINE' && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'ability_trigger', payload: { type: 'LEGO', x: player.x, y: player.y, id: player.id, color: config.color } });
+                    }
+                    else if (player.ability === 'BOSS') {
+                         player.burstCount = 6;
+                         player.burstTimer = 0;
+                    }
+                    else if (player.ability === 'GOD') {
+                         ref.timeStopTimer = 300; // 5 seconds (60fps)
+                         ref.timeStopOwnerId = player.id;
+                         showNotification(t.timeStop);
+                    }
                     else if (player.ability === 'IMPACT') {
                          ref.entities.forEach(target => {
                             if (target.id === player.id || target.dead) return;
                             const dx = target.x - player.x; const dy = target.y - player.y;
                             const dist = Math.sqrt(dx*dx + dy*dy);
                             if (dist < config.range + target.radius) {
-                                if (target.invulnerable) return;
+                                if (target.invulnerable || target.stunTimer > 0) return;
                                 const angle = Math.atan2(dy, dx);
                                 const force = config.force / (target.mass || 1.0);
                                 if (!target.isRemote) {
@@ -965,6 +1173,12 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             voidColor = '#60a5fa'; 
         }
 
+        if (ref.timeStopTimer > 0) {
+            voidColor = '#1e293b';
+            floorColor = '#334155';
+            gridColor = '#475569';
+        }
+
         // Void
         ctx.save();
         ctx.resetTransform();
@@ -989,6 +1203,16 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         ref.traps.forEach(t => {
             ctx.fillStyle = t.color;
             if (t.type === 'LEGO') { ctx.fillRect(t.x-8, t.y-8, 16, 16); ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(t.x-8, t.y-8, 4, 4); }
+        });
+
+        ref.projectiles.forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fillStyle = p.color;
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
         });
 
         ref.entities.forEach(e => {
@@ -1031,6 +1255,8 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
             if (e.ability === 'SPIKES') { for(let i=0; i<8; i++) { const a = (Math.PI*2/8)*i; ctx.beginPath(); ctx.moveTo(Math.cos(a)*e.radius, Math.sin(a)*e.radius); ctx.lineTo(Math.cos(a)*(e.radius+8), Math.sin(a)*(e.radius+8)); ctx.strokeStyle = '#64748b'; ctx.lineWidth = 3; ctx.stroke(); } }
             if (e.ability === 'MASS') { ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke(); }
             if (e.ability === 'OVERKILL') { ctx.lineWidth = 3; ctx.strokeStyle = '#ff0000'; ctx.stroke(); }
+            if (e.ability === 'ERROR') { ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.setLineDash([5, 5]); ctx.stroke(); ctx.setLineDash([]); }
+            if (e.ability === 'GOD') { ctx.lineWidth = 3; ctx.strokeStyle = '#fbbf24'; ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 10; ctx.stroke(); ctx.shadowBlur = 0; }
 
             ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
             if (!e.isPlayer) { ctx.rotate(e.facing); ctx.fillStyle = 'rgba(239, 68, 68, 0.5)'; ctx.beginPath(); ctx.moveTo(e.radius + 5, 0); ctx.lineTo(e.radius + 15, -5); ctx.lineTo(e.radius + 15, 5); ctx.fill(); ctx.rotate(-e.facing); }
@@ -1176,8 +1402,8 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                                 key={key} 
                                 onClick={() => {
                                     if (isLocked) {
-                                        if (data.category === 'BADGE') showNotification(`${t.reqBadge} ${data.name}`);
-                                        else if (key === 'OVERKILL') showNotification("Apenas VIP/Admin!");
+                                        if (data.category === 'BADGE') showNotification(`${t.reqBadge} ${data.name[lang]}`);
+                                        else if (key === 'OVERKILL') showNotification(t.onlyVip);
                                         else showNotification(`${t.reqPushes} ${data.reqPoints}`);
                                     } else {
                                         setSelectedAbility(key);
@@ -1187,7 +1413,7 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                               >
                                   {isLocked && <div className="absolute top-1 right-1 bg-white rounded-full p-0.5 z-10 shadow-sm"><Lock size={10} className="text-slate-400" /></div>}
                                   <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs" style={{ backgroundColor: data.color }}>{data.icon}</div>
-                                  <div className="text-[10px] font-bold text-slate-700 truncate w-full text-center px-1">{data.name}</div>
+                                  <div className="text-[10px] font-bold text-slate-700 truncate w-full text-center px-1">{data.name[lang]}</div>
                                   {isLocked && (
                                     <div className="text-[9px] font-bold text-red-500 truncate w-full text-center px-0.5 leading-none">
                                         {key === 'OVERKILL' ? 'VIP' : data.category === 'BADGE' ? 'BADGE' : data.reqPoints}
@@ -1204,8 +1430,8 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                               {ABILITIES[selectedAbility].icon}
                           </div>
                           <div>
-                              <div className="font-bold text-slate-800 text-lg">{ABILITIES[selectedAbility].name}</div>
-                              <div className="text-xs text-slate-400">{ABILITIES[selectedAbility].desc}</div>
+                              <div className="font-bold text-slate-800 text-lg">{ABILITIES[selectedAbility].name[lang]}</div>
+                              <div className="text-xs text-slate-400">{ABILITIES[selectedAbility].desc[lang]}</div>
                           </div>
                       </div>
                       <div className="text-right">
