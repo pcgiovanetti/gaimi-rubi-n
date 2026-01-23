@@ -698,17 +698,21 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
 
     // --- RESIZE OBSERVER FIX ---
     const observer = new ResizeObserver((entries) => {
-        for (let entry of entries) {
-            if (entry.target === containerRef.current) {
-                const { width, height } = entry.contentRect;
-                if (width && height) {
-                    canvas.width = width;
-                    canvas.height = height;
-                    gameRef.current.width = width;
-                    gameRef.current.height = height;
+        window.requestAnimationFrame(() => {
+            for (let entry of entries) {
+                if (entry.target === containerRef.current) {
+                    const { width, height } = entry.contentRect;
+                    if (width && height) {
+                        if (canvasRef.current) {
+                            canvasRef.current.width = width;
+                            canvasRef.current.height = height;
+                        }
+                        gameRef.current.width = width;
+                        gameRef.current.height = height;
+                    }
                 }
             }
-        }
+        });
     });
     
     if (containerRef.current) {

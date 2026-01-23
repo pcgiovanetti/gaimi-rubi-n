@@ -9,7 +9,7 @@ import AdminPanel from './components/AdminPanel';
 import AchievementToast from './components/AchievementToast';
 import { GAMES, TRANSLATIONS, ACHIEVEMENTS_LIST } from './constants';
 import { Game, Language, Achievement } from './types';
-import { Crown, Check, X, Shield, Trophy, User as UserIcon } from 'lucide-react';
+import { Crown, Check, X, Shield, Trophy, User as UserIcon, Copy, CheckCircle2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [filteredGames, setFilteredGames] = useState<Game[] | null>(null);
@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const [showVipModal, setShowVipModal] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
   
   // Data
   const [careerPushes, setCareerPushes] = useState(0);
@@ -86,6 +87,12 @@ const App: React.FC = () => {
       setLatestAchievement(achievement);
       
       await supabase.from('profiles').update({ achievements: newAch }).eq('id', user.id);
+  };
+
+  const copyToClipboard = (text: string) => {
+      navigator.clipboard.writeText(text);
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
   };
 
   const displayGames = filteredGames || GAMES;
@@ -199,9 +206,25 @@ const App: React.FC = () => {
                           <UserIcon className="text-red-500" /> {user.user_metadata?.full_name || 'Jogador'}
                       </h2>
                       <p className="text-slate-400 text-sm">{user.email}</p>
-                      {isVip && <div className="mt-2 inline-block px-3 py-1 bg-yellow-100 text-yellow-700 font-bold text-xs rounded-full">VIP MEMBER</div>}
+                      
+                      {/* USER ID DISPLAY FOR ADMINS */}
+                      <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between group">
+                          <div className="overflow-hidden">
+                              <div className="text-[10px] font-bold text-slate-400 uppercase mb-0.5">ID de Usuário (UUID)</div>
+                              <div className="text-[11px] font-mono text-slate-500 truncate">{user.id}</div>
+                          </div>
+                          <button 
+                            onClick={() => copyToClipboard(user.id)}
+                            className={`p-2 rounded-lg transition-all ${copiedId ? 'bg-green-500 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-100 shadow-sm'}`}
+                            title="Copiar ID"
+                          >
+                            {copiedId ? <CheckCircle2 size={16} /> : <Copy size={16} />}
+                          </button>
+                      </div>
+
+                      {isVip && <div className="mt-4 inline-block px-3 py-1 bg-yellow-100 text-yellow-700 font-bold text-xs rounded-full">VIP MEMBER</div>}
                   </div>
-                  <div className="p-8 bg-slate-50 max-h-[60vh] overflow-y-auto">
+                  <div className="p-8 bg-slate-50 max-h-[40vh] overflow-y-auto">
                       <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Trophy size={16}/> {t.achievements}</h3>
                       <div className="space-y-3">
                           {ACHIEVEMENTS_LIST.map(ach => {
