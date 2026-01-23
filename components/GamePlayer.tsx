@@ -1,17 +1,19 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { ArrowLeft, Maximize2, Minimize2 } from 'lucide-react';
-import { Game } from '../types';
-import StickRun from '../games/DinoRun'; // File kept as DinoRun.tsx but exports StickRun logic
+import { Game, Language } from '../types';
+import StickRun from '../games/DinoRun';
 import RetroArcade from '../games/RetroArcade';
 import TwoPlayerGames from '../games/TwoPlayerGames';
 import PushBattles from '../games/PushBattles';
 
 interface GamePlayerProps {
   game: Game;
+  lang: Language;
   onBack: () => void;
+  onUnlockAchievement: (id: string) => void;
 }
 
-const GamePlayer: React.FC<GamePlayerProps> = ({ game, onBack }) => {
+const GamePlayer: React.FC<GamePlayerProps> = ({ game, lang, onBack, onUnlockAchievement }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -34,7 +36,6 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, onBack }) => {
     }
   };
 
-  // Listen for fullscreen changes (ESC key interaction)
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
@@ -46,13 +47,12 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, onBack }) => {
     };
   }, []);
 
-  // Render the specific game based on ID
   const renderGame = () => {
     switch (game.id) {
       case 'push-battles':
-        return <PushBattles />;
-      case 'stick-run': // Updated ID
-      case 'dino-run':  // Legacy support just in case
+        return <PushBattles lang={lang} onUnlockAchievement={onUnlockAchievement} />;
+      case 'stick-run': 
+      case 'dino-run':
         return <StickRun />;
       case 'retro-arcade':
         return <RetroArcade />;
@@ -61,7 +61,7 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, onBack }) => {
       default:
         return (
           <div className="flex flex-col items-center justify-center h-full text-slate-400 bg-slate-50">
-            <p className="text-lg font-medium">Jogo em desenvolvimento</p>
+            <p className="text-lg font-medium">Game in development</p>
             <p className="text-sm">ID: {game.id} - {game.title}</p>
           </div>
         );
@@ -73,7 +73,6 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, onBack }) => {
       ref={containerRef} 
       className={`bg-white flex flex-col ${isFullscreen ? 'w-full h-screen' : 'w-full min-h-[600px] rounded-2xl border border-slate-200 shadow-2xl overflow-hidden'}`}
     >
-      {/* Game Toolbar */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white/90 backdrop-blur z-10 shrink-0">
         <div className="flex items-center gap-4">
           <button 
@@ -93,18 +92,17 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, onBack }) => {
           {isFullscreen ? (
             <>
               <Minimize2 size={16} />
-              <span>Sair da Tela Cheia</span>
+              <span>Exit Fullscreen</span>
             </>
           ) : (
             <>
               <Maximize2 size={16} />
-              <span>Tela Cheia</span>
+              <span>Fullscreen</span>
             </>
           )}
         </button>
       </div>
 
-      {/* Game Viewport */}
       <div className="flex-1 relative bg-slate-50 overflow-hidden select-none">
         {renderGame()}
       </div>

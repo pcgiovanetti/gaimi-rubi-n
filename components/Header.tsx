@@ -1,13 +1,20 @@
 import React from 'react';
-import { Gem, User, LogOut, Crown } from 'lucide-react';
+import { Gem, User, LogOut, Crown, CreditCard, Globe } from 'lucide-react';
+import { Language } from '../types';
+import { TRANSLATIONS } from '../constants';
 
 interface HeaderProps {
   user: any;
+  isVip: boolean;
+  lang: Language;
+  setLang: (l: Language) => void;
   onLogin: () => void;
   onLogout: () => void;
+  onBuyVip: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, onLogin, onLogout }) => {
+const Header: React.FC<HeaderProps> = ({ user, isVip, lang, setLang, onLogin, onLogout, onBuyVip }) => {
+  const t = TRANSLATIONS[lang];
   const isAdmin = user?.email === 'pcgiovanetti2011@gmail.com';
   
   // Tenta pegar o nome salvo nos metadados, senão pega a primeira parte do email
@@ -30,18 +37,35 @@ const Header: React.FC<HeaderProps> = ({ user, onLogin, onLogout }) => {
         
         <div className="flex items-center gap-6">
           <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
-            <a href="#" className="hover:text-red-500 transition-colors duration-300">Jogos</a>
-            <a href="#" className="hover:text-red-500 transition-colors duration-300">Sobre</a>
+            <a href="#" className="hover:text-red-500 transition-colors duration-300">{t.games}</a>
+            <a href="#" className="hover:text-red-500 transition-colors duration-300">{t.about}</a>
           </nav>
 
+          {/* Language Toggle */}
+          <button 
+            onClick={() => setLang(lang === 'en' ? 'pt' : 'en')}
+            className="flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-slate-800 transition-colors uppercase"
+          >
+            <Globe size={14} />
+            {lang}
+          </button>
+
           {user ? (
-             <div className="flex items-center gap-3 pl-6 border-l border-slate-100">
+             <div className="flex items-center gap-4 pl-6 border-l border-slate-100">
+                {!isVip && (
+                    <button onClick={onBuyVip} className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-yellow-400 hover:bg-yellow-500 text-black rounded-lg text-xs font-bold shadow-md shadow-yellow-500/20 transition-all active:scale-95">
+                        <CreditCard size={14} /> {t.vipButton}
+                    </button>
+                )}
+                
                 <div className="text-right hidden sm:block">
-                  <div className={`text-xs font-bold flex items-center justify-end gap-1 ${isAdmin ? 'text-yellow-500' : 'text-slate-900'}`}>
+                  <div className={`text-xs font-bold flex items-center justify-end gap-1 ${isAdmin ? 'text-red-500' : isVip ? 'text-yellow-600' : 'text-slate-900'}`}>
                       {displayName}
-                      {isAdmin && <Crown size={12} fill="currentColor" />}
+                      {(isAdmin || isVip) && <Crown size={12} fill="currentColor" className={isAdmin ? 'text-red-500' : 'text-yellow-500'} />}
                   </div>
-                  <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">{isAdmin ? 'Official Account' : 'Online'}</div>
+                  <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
+                      {isAdmin ? 'Admin' : isVip ? 'VIP Member' : 'Player'}
+                  </div>
                 </div>
                 <button 
                   onClick={onLogout}
@@ -57,7 +81,7 @@ const Header: React.FC<HeaderProps> = ({ user, onLogin, onLogout }) => {
               className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors"
             >
               <User size={16} />
-              <span>Entrar</span>
+              <span>{t.login}</span>
             </button>
           )}
         </div>
