@@ -71,7 +71,7 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, lang, onBack, onUnlockAch
   return (
     <div 
       ref={containerRef} 
-      className={`bg-white flex flex-col ${isFullscreen ? 'w-full h-screen' : 'w-full min-h-[600px] rounded-2xl border border-slate-200 shadow-2xl overflow-hidden'}`}
+      className={`bg-white flex flex-col ${isFullscreen ? 'w-full h-screen' : 'w-full h-[calc(100vh-80px)] md:h-[600px] rounded-2xl border border-slate-200 shadow-2xl overflow-hidden'}`}
     >
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white/90 backdrop-blur z-10 shrink-0">
         <div className="flex items-center gap-4">
@@ -82,7 +82,7 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, lang, onBack, onUnlockAch
           >
             <ArrowLeft size={20} />
           </button>
-          <h2 className="text-lg font-medium text-slate-800">{game.title}</h2>
+          <h2 className="text-lg font-medium text-slate-800 truncate max-w-[200px]">{game.title}</h2>
         </div>
 
         <button 
@@ -92,12 +92,12 @@ const GamePlayer: React.FC<GamePlayerProps> = ({ game, lang, onBack, onUnlockAch
           {isFullscreen ? (
             <>
               <Minimize2 size={16} />
-              <span>Exit Fullscreen</span>
+              <span className="hidden md:inline">Exit Fullscreen</span>
             </>
           ) : (
             <>
               <Maximize2 size={16} />
-              <span>Fullscreen</span>
+              <span className="hidden md:inline">Fullscreen</span>
             </>
           )}
         </button>

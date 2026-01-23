@@ -1024,13 +1024,36 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         
         ctx.clearRect(0, 0, width, height);
         ctx.save();
-        ctx.translate(width / 2 - camera.x, height / 2 - camera.y);
+        
+        // --- ZOOM LOGIC ---
+        // Se a largura for menor que 768px (mobile/tablet), aplicamos zoom out
+        // Valor base 1.0 (PC), reduz para ~0.65 em celulares pequenos
+        let zoom = 1.0;
+        if (width < 768) {
+            zoom = Math.max(0.65, width / 1000); 
+        }
+        
+        // Centraliza o zoom no meio da tela
+        ctx.translate(width / 2, height / 2);
+        ctx.scale(zoom, zoom);
+        ctx.translate(-camera.x, -camera.y);
 
         let floorColor = '#ffffff'; let gridColor = '#e2e8f0'; let voidColor = '#f8fafc'; 
         if (currentTheme === 'CLASSIC') { floorColor = '#4ade80'; gridColor = '#86efac'; voidColor = '#60a5fa'; }
         if (ref.timeStopTimer > 0) { voidColor = '#1e293b'; floorColor = '#334155'; gridColor = '#475569'; }
 
-        ctx.save(); ctx.resetTransform(); ctx.fillStyle = voidColor; ctx.fillRect(0, 0, width, height); ctx.restore();
+        // Background (Infinite Void)
+        // Precisamos desenhar um retângulo grande o suficiente para cobrir a tela mesmo com zoom out
+        ctx.save(); 
+        ctx.fillStyle = voidColor;
+        // Inverte a transformação para desenhar o fundo estático ou relativo
+        ctx.translate(camera.x, camera.y); 
+        ctx.scale(1/zoom, 1/zoom);
+        ctx.translate(-width/2, -height/2);
+        ctx.fillRect(0, 0, width, height); 
+        ctx.restore();
+
+        // Arena Circle
         ctx.beginPath(); ctx.arc(0, 0, ARENA_RADIUS, 0, Math.PI * 2); ctx.fillStyle = floorColor; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = gridColor; ctx.stroke();
         ctx.save(); ctx.clip(); ctx.strokeStyle = gridColor; ctx.lineWidth = 2;
         for(let i = -ARENA_RADIUS; i < ARENA_RADIUS; i+=80) { ctx.beginPath(); ctx.moveTo(i, -ARENA_RADIUS); ctx.lineTo(i, ARENA_RADIUS); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-ARENA_RADIUS, i); ctx.lineTo(ARENA_RADIUS, i); ctx.stroke(); }
@@ -1071,8 +1094,11 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
         });
 
         ref.particles.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill(); });
-        ctx.globalAlpha = 1.0; ctx.restore();
+        ctx.globalAlpha = 1.0; 
+        
+        ctx.restore(); // END CAMERA ZOOM
 
+        // --- UI (NO ZOOM) ---
         if (gameState === 'PLAYING') {
             const player = ref.entities.find(e => e.isPlayer);
             if (player && !player.dead) {
@@ -1320,13 +1346,13 @@ const PushBattles: React.FC<PushBattlesProps> = ({ lang = 'en', onUnlockAchievem
                 <div className="absolute bottom-6 right-6 flex flex-col gap-4 z-40">
                     <button 
                         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleMobileSkill(); }} 
-                        className="w-16 h-16 bg-blue-500/80 backdrop-blur border-2 border-white/30 rounded-full flex items-center justify-center text-white font-black shadow-lg active:scale-90 transition-transform select-none"
+                        className="w-14 h-14 md:w-16 md:h-16 bg-blue-500/80 backdrop-blur border-2 border-white/30 rounded-full flex items-center justify-center text-white font-black shadow-lg active:scale-90 transition-transform select-none"
                     >
                         E
                     </button>
                     <button 
                         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleMobileAttack(); }} 
-                        className="w-24 h-24 bg-red-500/80 backdrop-blur border-4 border-white/30 rounded-full flex items-center justify-center text-white font-black shadow-xl active:scale-90 transition-transform select-none"
+                        className="w-20 h-20 md:w-24 md:h-24 bg-red-500/80 backdrop-blur border-4 border-white/30 rounded-full flex items-center justify-center text-white font-black shadow-xl active:scale-90 transition-transform select-none"
                     >
                         ATK
                     </button>
